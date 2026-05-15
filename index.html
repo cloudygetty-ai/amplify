@@ -320,6 +320,44 @@ input.eq-sl::-webkit-slider-thumb{-webkit-appearance:none;width:10px;height:10px
     <div class="card"><div class="card-val b" id="dynV">--</div><div class="card-lbl">DYNAMIC dB</div></div>
   </div>
 
+  <!-- NOISE GATE STATUS -->
+  <div style="padding:6px 12px 0;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+    <div class="sb-seg active" style="gap:8px">
+      <div class="sb-dot" id="ngDot" style="background:#1a3a5a"></div>
+      <span class="sb-lbl">NOISE GATE</span>
+      <span class="sb-val hi" id="ngStatus">OFF</span>
+    </div>
+    <div class="sb-seg" id="calibSeg" style="display:none">
+      <span class="sb-lbl">CALIBRATING</span>
+      <span class="sb-val" id="calibPct">0%</span>
+    </div>
+    <div class="sb-seg" id="ngFloorSeg" style="display:none">
+      <span class="sb-lbl">NOISE FLOOR</span>
+      <span class="sb-val" id="ngFloorV">--dB</span>
+    </div>
+    <div class="sb-seg" id="ngGateSeg" style="display:none">
+      <span class="sb-lbl">GATE</span>
+      <span class="sb-val" id="ngGateV">CLOSED</span>
+    </div>
+    <div class="sb-seg active" style="gap:6px;margin-left:auto">
+      <button onclick="toggleNG()" id="ngBtn" style="padding:2px 10px;font-size:7px;letter-spacing:.2em;border:1px solid var(--b1);background:rgba(0,255,231,.06);color:var(--g);cursor:pointer;font-family:var(--font)">ENABLE</button>
+      <button onclick="recalibrateNG()" id="recalBtn" style="padding:2px 10px;font-size:7px;letter-spacing:.2em;border:1px solid var(--b1);background:transparent;color:var(--dim);cursor:pointer;font-family:var(--font)">RECALIBRATE</button>
+    </div>
+  </div>
+  <!-- NOISE GATE STRENGTH SLIDER -->
+  <div style="padding:6px 12px 0;display:flex;align-items:center;gap:12px" id="ngSliderRow" style="display:none">
+    <span class="sec-lbl" style="white-space:nowrap">SUPPRESSION</span>
+    <input type="range" min="0.3" max="0.99" step="0.01" value="0.85" id="ngStrSlider"
+      style="flex:1;height:2px;appearance:none;-webkit-appearance:none;outline:none;border:none;cursor:pointer;background:linear-gradient(to right,#00ffe7 61%,#0a1a2a 61%)"
+      oninput="ngStrength=parseFloat(this.value);document.getElementById('ngStrVal').textContent=Math.round(this.value*100)+'%';updateSliderBg(this)"/>
+    <span class="sb-val hi" id="ngStrVal">85%</span>
+    <span class="sec-lbl" style="white-space:nowrap">SENSITIVITY</span>
+    <input type="range" min="0.3" max="0.99" step="0.01" value="0.7" id="ngSensSlider"
+      style="flex:1;height:2px;appearance:none;-webkit-appearance:none;outline:none;border:none;cursor:pointer;background:linear-gradient(to right,#00ffe7 57%,#0a1a2a 57%)"
+      oninput="updateNGSens(this)"/>
+    <span class="sb-val hi" id="ngSensVal">70%</span>
+  </div>
+
   <!-- OSC + LISSAJOUS -->
   <div class="osc-row">
     <div class="osc-wrap">
@@ -434,6 +472,11 @@ let params={...PRESETS["LOW VOICE"]},preset="LOW VOICE";
 let fx={hp:true,eq:true,lp:true,comp:true,gain:true,inv:false,mono:false};
 let eqGains=new Array(8).fill(0);
 let mediaRec=null,recChunks=[],recActive=false,recStart=0,recTick=null,recBytes=0;
+// ── NOISE GATE STATE ──
+let noiseGateNode=null,noiseProfile=null,noiseCalibrating=false,noiseCalibDone=false;
+let noiseCalibBuf=[],noiseCalibFrames=0,CALIB_FRAMES=60; // ~2 sec @ 30fps
+let gateOpen=false,gateSmooth=0,spectralFloor=null;
+let ngEnabled=true,ngStrength=0.85,ngAttack=0.005,ngRelease=0.1;
 let recordings=[],recCnt=0,recDest=null;
 const players={};
 let waveHist=new Float32Array(600);
@@ -576,14 +619,28 @@ function buildGraph(){
   gainNode=ctx.createGain();gainNode.gain.value=params.voiceBoost;
   outAn=ctx.createAnalyser();outAn.fftSize=2048;outAn.smoothingTimeConstant=.8;
   rebuildGraph();drawCompCurve();drawEQCurve();
+  // Start noise calibration automatically
+  if(ngEnabled) startNoiseCalibration();
 }
 
 function rebuildGraph(){
   if(!srcNode)return;
   [srcNode,hpNode,...eqNodes,lpNode,compNode,gainNode,outAn].forEach(n=>{try{n.disconnect();}catch(_){}});
+  if(noiseGateNode){try{noiseGateNode.disconnect();}catch(_){}noiseGateNode=null;}
+  noiseProfile=null;noiseCalibDone=false;noiseCalibrating=false;noiseCalibBuf=[];noiseCalibFrames=0;
+  gateOpen=false;
+  document.getElementById('ngDot').style.background='#1a3a5a';
+  document.getElementById('ngStatus').textContent='OFF';
+  document.getElementById('calibSeg').style.display='none';
+  document.getElementById('ngFloorSeg').style.display='none';
+  document.getElementById('ngGateSeg').style.display='none';
+  document.getElementById('ngSliderRow').style.display='none';
   srcNode.connect(inAn);
+  // Build/rebuild noise gate ScriptProcessor
+  buildNoiseGateNode();
   let last=srcNode;
   if(fx.hp){last.connect(hpNode);last=hpNode;}
+  if(ngEnabled&&noiseGateNode){last.connect(noiseGateNode);last=noiseGateNode;}
   if(fx.eq){eqNodes.forEach((n,i)=>{last.connect(n);last=n;});}
   if(fx.lp){last.connect(lpNode);last=lpNode;}
   if(fx.comp){last.connect(compNode);last=compNode;}
@@ -954,6 +1011,160 @@ function estimateBPM(td,sr){
     bpmEst=bpmBuf.reduce((a,b)=>a+b,0)/bpmBuf.length;
     document.getElementById('bpmV').textContent=Math.round(bpmEst);
   }
+}
+
+// ══════════════════════════════════════════════
+// NOISE GATE ENGINE (Spectral Subtraction + Voice-Band Gate)
+// ══════════════════════════════════════════════
+let ngSensitivity = 0.7; // 0=loose 1=aggressive
+
+function buildNoiseGateNode(){
+  if(noiseGateNode){try{noiseGateNode.disconnect();}catch(_){}}
+  if(!ctx) return;
+  const bufSize=2048;
+  noiseGateNode=ctx.createScriptProcessor(bufSize,1,1);
+  noiseGateNode.onaudioprocess=processNoiseGate;
+}
+
+function processNoiseGate(evt){
+  const input=evt.inputBuffer.getChannelData(0);
+  const output=evt.outputBuffer.getChannelData(0);
+  const N=input.length;
+
+  // If gate disabled just pass through
+  if(!ngEnabled||!noiseCalibDone||!noiseProfile){
+    for(let i=0;i<N;i++) output[i]=input[i];
+    return;
+  }
+
+  // ── Spectral Subtraction (per-frame FFT approx via energy bands) ──
+  // Divide buffer into 8 bands, subtract noise floor per band
+  const bandSize=Math.floor(N/8);
+  const bandEnergy=new Float32Array(8);
+  for(let b=0;b<8;b++){
+    let e=0;
+    for(let i=b*bandSize;i<(b+1)*bandSize;i++) e+=input[i]*input[i];
+    bandEnergy[b]=Math.sqrt(e/bandSize);
+  }
+
+  // Voice frequency bands: bands 1-5 (roughly 170Hz-5kHz at 44.1kHz, 2048 buf)
+  // band 0=sub, 1=low-mid, 2=mid, 3=upper-mid, 4=presence, 5=hi-mid, 6=hi, 7=air
+  const VOICE_BANDS=[1,2,3,4,5];
+
+  // Compute per-sample gate
+  for(let i=0;i<N;i++){
+    const band=Math.min(7,Math.floor((i/N)*8));
+    const noiseRef=noiseProfile[band]*ngStrength;
+    const sig=bandEnergy[band];
+
+    // Is this band above noise floor? (voice detection per-band)
+    const isVoiceBand=VOICE_BANDS.includes(band);
+    const snr=sig/(noiseRef+1e-10);
+
+    // Gate open threshold: SNR must exceed sensitivity-based threshold
+    const snrThresh=1.0+(ngSensitivity*3.0); // 1.0-4.0x above noise floor
+    const targetGain=(snr>snrThresh&&isVoiceBand)?1.0:
+                     (snr>snrThresh*0.5&&isVoiceBand)?Math.pow((snr-snrThresh*0.5)/(snrThresh*0.5),0.5):
+                     0.0;
+
+    // Smooth gate open/close
+    const alpha=targetGain>gateSmooth?ngAttack:ngRelease;
+    gateSmooth=gateSmooth*(1-alpha)+targetGain*alpha;
+
+    // Apply gate + spectral subtraction
+    const subFactor=Math.max(0,1-(noiseRef/(sig+1e-10))*ngStrength);
+    output[i]=input[i]*gateSmooth*Math.max(0.1,subFactor);
+  }
+
+  // Update gate indicator (throttled)
+  const avgGate=gateSmooth;
+  gateOpen=avgGate>0.1;
+}
+
+function startNoiseCalibration(){
+  if(!ctx||!inAn) return;
+  noiseCalibrating=true;noiseCalibDone=false;noiseCalibBuf=[];noiseCalibFrames=0;
+  noiseProfile=null;
+  document.getElementById('calibSeg').style.display='flex';
+  document.getElementById('ngFloorSeg').style.display='none';
+  document.getElementById('ngGateSeg').style.display='none';
+  document.getElementById('ngSliderRow').style.display='none';
+  document.getElementById('ngDot').style.background='#ffb300';
+  document.getElementById('ngStatus').textContent='CALIBRATING';
+  // Collect noise samples over CALIB_FRAMES frames
+  const calibInterval=setInterval(()=>{
+    if(!active){clearInterval(calibInterval);return;}
+    const td=new Float32Array(inAn.fftSize);
+    inAn.getFloatTimeDomainData(td);
+    const N=td.length,bandSize=Math.floor(N/8);
+    const bandE=new Float32Array(8);
+    for(let b=0;b<8;b++){
+      let e=0;for(let i=b*bandSize;i<(b+1)*bandSize;i++) e+=td[i]*td[i];
+      bandE[b]=Math.sqrt(e/bandSize);
+    }
+    noiseCalibBuf.push(bandE);
+    noiseCalibFrames++;
+    document.getElementById('calibPct').textContent=Math.round((noiseCalibFrames/CALIB_FRAMES)*100)+'%';
+    if(noiseCalibFrames>=CALIB_FRAMES){
+      clearInterval(calibInterval);
+      finalizeCalibration();
+    }
+  },33); // ~30fps
+}
+
+function finalizeCalibration(){
+  // Average energy per band across all calibration frames
+  noiseProfile=new Float32Array(8);
+  noiseCalibBuf.forEach(frame=>{for(let b=0;b<8;b++) noiseProfile[b]+=frame[b];});
+  for(let b=0;b<8;b++) noiseProfile[b]/=noiseCalibBuf.length;
+  // Add 20% headroom
+  for(let b=0;b<8;b++) noiseProfile[b]*=1.2;
+  noiseCalibrating=false;noiseCalibDone=true;
+  // Compute floor dB
+  const avgE=noiseProfile.reduce((a,b)=>a+b,0)/8;
+  const floorDb=avgE>0?Math.round(20*Math.log10(avgE)):-80;
+  document.getElementById('calibSeg').style.display='none';
+  document.getElementById('ngFloorSeg').style.display='flex';
+  document.getElementById('ngGateSeg').style.display='flex';
+  document.getElementById('ngSliderRow').style.display='flex';
+  document.getElementById('ngFloorV').textContent=floorDb+'dB';
+  document.getElementById('ngDot').style.background='#00ffe7';
+  document.getElementById('ngDot').style.boxShadow='0 0 6px #00ffe7';
+  document.getElementById('ngStatus').textContent='ACTIVE';
+  document.getElementById('ngBtn').textContent='DISABLE';
+  // Start gate status ticker
+  setInterval(()=>{
+    if(!active||!noiseCalibDone) return;
+    document.getElementById('ngGateV').textContent=gateOpen?'OPEN':'CLOSED';
+    document.getElementById('ngGateV').style.color=gateOpen?'#00ffe7':'#ff3b5c';
+  },100);
+}
+
+function recalibrateNG(){
+  if(!active){return;}
+  noiseCalibDone=false;gateSmooth=0;
+  startNoiseCalibration();
+}
+
+function toggleNG(){
+  ngEnabled=!ngEnabled;
+  document.getElementById('ngBtn').textContent=ngEnabled?'DISABLE':'ENABLE';
+  document.getElementById('ngDot').style.background=ngEnabled?'#00ffe7':'#1a3a5a';
+  document.getElementById('ngDot').style.boxShadow=ngEnabled?'0 0 6px #00ffe7':'none';
+  document.getElementById('ngStatus').textContent=ngEnabled?'ACTIVE':'DISABLED';
+  if(ngEnabled&&active&&!noiseCalibDone) startNoiseCalibration();
+  if(active) rebuildGraph();
+}
+
+function updateNGSens(el){
+  ngSensitivity=parseFloat(el.value);
+  document.getElementById('ngSensVal').textContent=Math.round(el.value*100)+'%';
+  updateSliderBg(el);
+}
+
+function updateSliderBg(el){
+  const p=((el.value-el.min)/(el.max-el.min))*100;
+  el.style.background=`linear-gradient(to right,#00ffe7 ${p}%,#0a1a2a ${p}%)`;
 }
 
 // ══════════════════════════════════════════════
