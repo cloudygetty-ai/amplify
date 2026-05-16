@@ -240,9 +240,89 @@ canvas#cc{width:100%;height:72px;display:block;background:rgba(13,6,24,.8);borde
 
 /* ── FOOTER ── */
 .footer{position:relative;z-index:2;margin-top:10px;font-size:7px;color:var(--dimmer);letter-spacing:.2em;text-align:center}
+
+/* ── FLOATING TOGGLE ── */
+#floatToggle{
+  position:fixed;top:16px;right:16px;z-index:99999;
+  width:44px;height:44px;border-radius:50%;
+  background:linear-gradient(135deg,rgba(45,21,85,.95),rgba(26,13,48,.98));
+  border:1px solid var(--purple2);
+  box-shadow:0 0 16px rgba(155,89,255,.4),0 4px 20px rgba(0,0,0,.6);
+  cursor:pointer;display:flex;align-items:center;justify-content:center;
+  font-size:18px;transition:all .2s;user-select:none;
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)
+}
+#floatToggle:hover{box-shadow:0 0 24px rgba(155,89,255,.7),0 4px 24px rgba(0,0,0,.6);transform:scale(1.08)}
+#floatToggle:active{transform:scale(.94)}
+#floatToggle.hidden-mode{
+  background:rgba(255,255,255,.08);
+  border-color:rgba(255,255,255,.15);
+  box-shadow:0 0 8px rgba(255,255,255,.1);
+}
+
+/* ── INVISIBLE MODE ── */
+#invisibleBar{
+  position:fixed;top:0;left:0;right:0;z-index:99998;
+  height:3px;background:linear-gradient(90deg,transparent,rgba(155,89,255,.6),rgba(180,122,255,.8),rgba(155,89,255,.6),transparent);
+  opacity:0;transition:opacity .3s;pointer-events:none
+}
+body.invisible-mode #invisibleBar{opacity:1}
+body.invisible-mode .panel,
+body.invisible-mode .hdr,
+body.invisible-mode .footer{
+  opacity:0 !important;pointer-events:none;transition:opacity .25s
+}
+body.invisible-mode #floatToggle{
+  background:rgba(255,255,255,.06);
+  border-color:rgba(255,255,255,.12);
+  box-shadow:0 0 6px rgba(155,89,255,.2);
+  opacity:.35;
+}
+body.invisible-mode #floatToggle:hover{
+  opacity:1;
+  box-shadow:0 0 20px rgba(155,89,255,.6);
+}
+body.invisible-mode{background:transparent !important}
+body.invisible-mode::before{opacity:0 !important}
+body.invisible-mode .grid,body.invisible-mode .grid-lg,body.invisible-mode .scan{opacity:0 !important}
+
+/* ── ALWAYS-ON-TOP PILL (shows in invisible mode) ── */
+#statusPill{
+  position:fixed;bottom:20px;right:16px;z-index:99999;
+  background:linear-gradient(135deg,rgba(45,21,85,.92),rgba(26,13,48,.95));
+  border:1px solid var(--purple2);border-radius:20px;
+  padding:6px 14px;display:flex;align-items:center;gap:8px;
+  font-family:var(--font);font-size:8px;letter-spacing:.15em;
+  box-shadow:0 0 16px rgba(155,89,255,.3),0 4px 16px rgba(0,0,0,.5);
+  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  cursor:pointer;user-select:none;transition:all .2s;
+  opacity:0;pointer-events:none
+}
+#statusPill.visible{opacity:1;pointer-events:all}
+#statusPill:hover{box-shadow:0 0 24px rgba(155,89,255,.5)}
+.pill-dot{width:6px;height:6px;border-radius:50%;background:var(--dimmer);transition:all .2s;flex-shrink:0}
+.pill-dot.v{background:var(--green);box-shadow:0 0 6px var(--green)}
+.pill-dot.s{background:var(--amber);box-shadow:0 0 6px var(--amber)}
+.pill-dot.r{background:var(--red);box-shadow:0 0 6px var(--red);animation:blink .6s infinite}
+.pill-txt{color:var(--txt2)}
+.pill-gate{color:var(--purple2);margin-left:2px}
+.pill-gate.ok{color:var(--green)}
+
 </style>
 </head>
 <body>
+
+<!-- FLOATING TOGGLE -->
+<button id="floatToggle" title="Toggle visibility" onclick="toggleInvisible()">🎙</button>
+<div id="invisibleBar"></div>
+
+<!-- STATUS PILL (visible in invisible mode) -->
+<div id="statusPill" onclick="toggleInvisible()">
+  <div class="pill-dot" id="pillDot"></div>
+  <span class="pill-txt" id="pillTxt">STANDBY</span>
+  <span class="pill-gate" id="pillGate"></span>
+</div>
+
 <div class="grid"></div><div class="grid-lg"></div><div class="scan"></div>
 
 <!-- HEADER -->
@@ -1034,6 +1114,73 @@ function setSt(s,on){const e=document.getElementById('stxt');e.textContent=s;e.c
 function setErr(m){const b=document.getElementById('errB');if(m){b.textContent='// '+m;b.style.display='block';}else b.style.display='none';}
 // Init NG slider style
 [document.getElementById('ngStr'),document.getElementById('ngSens')].forEach(sl=>{if(sl)setPctP(sl);});
+
+// ── INVISIBLE MODE + ALWAYS-ON-TOP ──────────────────
+let invisibleMode = false;
+
+function toggleInvisible(){
+  invisibleMode = !invisibleMode;
+  document.body.classList.toggle('invisible-mode', invisibleMode);
+  document.getElementById('floatToggle').classList.toggle('hidden-mode', invisibleMode);
+  document.getElementById('floatToggle').textContent = invisibleMode ? '👁' : '🎙';
+  document.getElementById('statusPill').classList.toggle('visible', invisibleMode);
+  // Make body bg transparent when invisible so it layers over other apps
+  document.body.style.background = invisibleMode ? 'transparent' : '';
+}
+
+// Sync pill with main status indicators
+setInterval(() => {
+  if(!invisibleMode) return;
+  // dot state
+  const dot = document.getElementById('dot');
+  const pDot = document.getElementById('pillDot');
+  pDot.className = 'pill-dot ' + (dot ? dot.className.replace('sdot','').trim() : '');
+  // status text
+  const stxt = document.getElementById('stxt');
+  document.getElementById('pillTxt').textContent = stxt ? stxt.textContent : 'STANDBY';
+  // gate
+  const ngGV = document.getElementById('ngGV');
+  const pg = document.getElementById('pillGate');
+  if(ngGV && noiseCalibDone){
+    pg.textContent = ' // GATE:' + (gateOpen ? 'OPEN' : 'CLOSED');
+    pg.className = 'pill-gate' + (gateOpen ? ' ok' : '');
+  } else {
+    pg.textContent = '';
+  }
+}, 120);
+
+// Keyboard shortcut: Escape toggles invisible mode
+document.addEventListener('keydown', e => {
+  if(e.key === 'Escape') toggleInvisible();
+  // Space = engage/disengage when invisible
+  if(e.key === ' ' && invisibleMode){ e.preventDefault(); toggleEngage(); }
+});
+
+// Drag the toggle button
+(function(){
+  const el = document.getElementById('floatToggle');
+  let dragging=false,ox=0,oy=0,sx=0,sy=0;
+  el.addEventListener('mousedown', e=>{
+    dragging=true; ox=e.clientX; oy=e.clientY;
+    sx=el.getBoundingClientRect().right; sy=el.getBoundingClientRect().top;
+    e.preventDefault();
+  });
+  el.addEventListener('touchstart', e=>{
+    dragging=true; ox=e.touches[0].clientX; oy=e.touches[0].clientY;
+    sx=el.getBoundingClientRect().right; sy=el.getBoundingClientRect().top;
+  },{passive:true});
+  const move = (cx,cy) => {
+    if(!dragging)return;
+    const dx=cx-ox, dy=cy-oy;
+    el.style.right = Math.max(4, window.innerWidth - (sx+dx) - el.offsetWidth/2) + 'px';
+    el.style.top   = Math.max(4, sy+dy) + 'px';
+  };
+  document.addEventListener('mousemove', e=>move(e.clientX,e.clientY));
+  document.addEventListener('touchmove', e=>move(e.touches[0].clientX,e.touches[0].clientY),{passive:true});
+  document.addEventListener('mouseup', ()=>dragging=false);
+  document.addEventListener('touchend', ()=>dragging=false);
+})();
+
 </script>
 </body>
 </html>
