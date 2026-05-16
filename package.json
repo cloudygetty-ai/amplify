@@ -1,0 +1,11 @@
+{
+  "name": "amplify",
+  "version": "6.0.0",
+  "description": "AMPLIFY — Sentinel Audio Engine. Voice isolation, spectral noise gate, pitch detection, recorder.",
+  "homepage": "https://amplify-git-main-cloudygetty-ais-projects.vercel.app",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cloudygetty-ai/amplify"
+  },
+  "license": "MIT"
+}
