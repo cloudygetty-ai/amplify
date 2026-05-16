@@ -241,6 +241,14 @@ canvas#cc{width:100%;height:72px;display:block;background:rgba(13,6,24,.8);borde
 /* ── FOOTER ── */
 .footer{position:relative;z-index:2;margin-top:10px;font-size:7px;color:var(--dimmer);letter-spacing:.2em;text-align:center}
 
+
+#hdrLine{transition:opacity .3s}
+body.recording #hdrLine{
+  background:linear-gradient(90deg,transparent,var(--red),var(--accent),var(--red),transparent) !important;
+  animation:hdrpulse 1s ease-in-out infinite;
+}
+@keyframes hdrpulse{0%,100%{opacity:.5}50%{opacity:1}}
+
 /* ── FLOATING TOGGLE ── */
 #floatToggle{
   position:fixed;top:16px;right:16px;z-index:99999;
@@ -283,6 +291,8 @@ body.invisible-mode #floatToggle:hover{
   box-shadow:0 0 20px rgba(155,89,255,.6);
 }
 body.invisible-mode{background:transparent !important}
+html{transition:background .2s}
+body.invisible-mode ~ *{pointer-events:none}
 body.invisible-mode::before{opacity:0 !important}
 body.invisible-mode .grid,body.invisible-mode .grid-lg,body.invisible-mode .scan{opacity:0 !important}
 
@@ -334,7 +344,7 @@ body.invisible-mode .grid,body.invisible-mode .grid-lg,body.invisible-mode .scan
   </div>
   <h1>AMPLIFY</h1>
   <div class="hdr-sub">SENTINEL AUDIO ENGINE v6 // VOICE ISOLATION · SPECTRAL GATE · ANALYSIS · RECORDER</div>
-  <div class="hdr-line"></div>
+  <div class="hdr-line" id="hdrLine"></div>
 </div>
 
 <div class="panel">
@@ -386,7 +396,7 @@ body.invisible-mode .grid,body.invisible-mode .grid-lg,body.invisible-mode .scan
   </div>
 
   <!-- NOISE GATE SLIDERS -->
-  <div class="ng-ctrl-row" id="ngSlRow" style="display:none">
+  <div class="ng-ctrl-row" id="ngSlRow" style="display:none;flex-wrap:wrap;gap:8px;align-items:center">
     <span class="ng-lbl">SUPPRESSION</span>
     <input type="range" min="0.3" max="0.99" step="0.01" value="0.85" id="ngStr"
       style="width:100px;height:2px;appearance:none;-webkit-appearance:none;outline:none;border:none;cursor:pointer"
@@ -508,13 +518,13 @@ body.invisible-mode .grid,body.invisible-mode .grid-lg,body.invisible-mode .scan
 
   <div class="div"></div>
   <div class="eng-row">
-    <button class="eng off" id="engBtn" onclick="toggleEngage()">
+    <button class="eng off" id="engBtn" onclick="toggleEngage()" aria-label="Engage voice isolation">
       <div class="eng-sweep"></div>ENGAGE
     </button>
   </div>
 </div>
 
-<div class="footer">SENTINEL AUDIO v6.0 // WEB AUDIO API // HP→GATE→EQ→LP→COMP→GAIN // ACF PITCH // SPECTRAL SUBTRACTION</div>
+<div class="footer">SENTINEL AUDIO v6.0 // WEB AUDIO API // HP→GATE→EQ→LP→COMP→GAIN // ACF PITCH // SPECTRAL SUBTRACTION &nbsp;·&nbsp; <a href="https://github.com/cloudygetty-ai/amplify" target="_blank" style="color:var(--dimmer);text-decoration:none">github.com/cloudygetty-ai/amplify</a></div>
 
 <script>
 // ══ CONFIG ══════════════════════════════════════════
@@ -1056,7 +1066,7 @@ function startRec(){
   mediaRec=new MediaRecorder(ms,{mimeType:mime,audioBitsPerSecond:128000});
   mediaRec.ondataavailable=e=>{if(e.data.size>0){recChunks.push(e.data);recBytes+=e.data.size;document.getElementById('rsize').textContent=fmtB(recBytes);}};
   mediaRec.onstop=finalizeRec;mediaRec.start(200);
-  recActive=true;recStart=Date.now();
+  recActive=true;recStart=Date.now();document.body.classList.add('recording');
   recTick=setInterval(()=>document.getElementById('rtimer').textContent=fmtT(Math.round((Date.now()-recStart)/1000)),500);
   document.getElementById('recBtn').className='rbtn armed';document.getElementById('recBtn').innerHTML='⏹ STOP';
   document.getElementById('rtimer').className='rtimer run';
@@ -1064,7 +1074,7 @@ function startRec(){
 function stopRec(){
   if(mediaRec&&mediaRec.state!=='inactive')mediaRec.stop();
   if(recDest){try{gainNode.disconnect(recDest);}catch(_){}recDest=null;}
-  clearInterval(recTick);recActive=false;
+  clearInterval(recTick);recActive=false;document.body.classList.remove('recording');
   document.getElementById('recBtn').className='rbtn ready';document.getElementById('recBtn').innerHTML='⏺ RECORD';
   document.getElementById('rtimer').textContent='00:00';document.getElementById('rtimer').className='rtimer';
   document.getElementById('rsize').textContent='';
@@ -1111,7 +1121,16 @@ function delRec(id){
 function fmtT(s){return`${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;}
 function fmtB(b){return b>1048576?`${(b/1048576).toFixed(1)}MB`:b>1024?`${(b/1024).toFixed(0)}KB`:`${b}B`;}
 function setSt(s,on){const e=document.getElementById('stxt');e.textContent=s;e.className='sv'+(on?' w':'');}
-function setErr(m){const b=document.getElementById('errB');if(m){b.textContent='// '+m;b.style.display='block';}else b.style.display='none';}
+function setErr(m){
+  const b=document.getElementById('errB');
+  if(m){
+    const isIOS=/iPhone|iPad|iPod/i.test(navigator.userAgent);
+    const hint = isIOS && m.toLowerCase().includes('denied')
+      ? m + ' — Open in Safari for mic access'
+      : m;
+    b.textContent='// '+hint;b.style.display='block';
+  }else b.style.display='none';
+}
 // Init NG slider style
 [document.getElementById('ngStr'),document.getElementById('ngSens')].forEach(sl=>{if(sl)setPctP(sl);});
 
@@ -1138,6 +1157,11 @@ setInterval(() => {
   // status text
   const stxt = document.getElementById('stxt');
   document.getElementById('pillTxt').textContent = stxt ? stxt.textContent : 'STANDBY';
+  // show NF in pill when active
+  const nfEl = document.getElementById('nfV');
+  if(nfEl && stxt && stxt.textContent === 'ACTIVE'){
+    document.getElementById('pillTxt').textContent = 'ACTIVE · NF:' + nfEl.textContent;
+  }
   // gate
   const ngGV = document.getElementById('ngGV');
   const pg = document.getElementById('pillGate');
@@ -1147,6 +1171,11 @@ setInterval(() => {
   } else {
     pg.textContent = '';
   }
+  // recording indicator in toggle button
+  const ft = document.getElementById('floatToggle');
+  if(recActive) ft.textContent = '⏺';
+  else if(invisibleMode) ft.textContent = '👁';
+  else ft.textContent = '🎙';
 }, 120);
 
 // Keyboard shortcut: Escape toggles invisible mode
