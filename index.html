@@ -114,6 +114,33 @@ h1{font-size:38px;font-weight:700;letter-spacing:-.02em;background:linear-gradie
 }
 .cls-verdict.v-human{border-color:#00ff9d;color:#00ff9d;background:rgba(0,255,157,.05)}
 
+/* ── MUTE STRIP ── */
+.mute-strip{
+  margin:0 18px 0;display:flex;gap:0;border:1px solid #1a1a1a;
+  border-top:none;overflow:hidden;
+}
+.mute-btn{
+  flex:1;padding:9px 8px;font-size:10px;letter-spacing:.18em;
+  border:none;background:#080808;color:#2a2a2a;
+  cursor:pointer;font-family:'Courier New',monospace;
+  transition:all .18s;display:flex;align-items:center;
+  justify-content:center;gap:7px;
+}
+.mute-btn:not(:last-child){border-right:1px solid #1a1a1a}
+.mute-btn .mute-icon{font-size:13px;transition:all .18s}
+.mute-btn.muted-human{
+  background:rgba(239,68,68,.1);color:#ef4444;
+  border-color:#ef444444;
+}
+.mute-btn.muted-human .mute-icon{opacity:.4}
+.mute-btn.muted-media{
+  background:rgba(239,68,68,.1);color:#ef4444;
+}
+.mute-btn.muted-media .mute-icon{opacity:.4}
+.mute-btn:hover:not(.muted-human):not(.muted-media){
+  background:#0d0d0d;color:#555;
+}
+
 /* ── SOURCE MODE SWITCH ── */
 .src-switch{
   margin:12px 18px 0;display:flex;align-items:stretch;
@@ -345,6 +372,16 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
     </button>
   </div>
   <div class="src-mode-desc" id="srcModeDesc">AUTO — classifier determines source type in real time</div>
+  <div class="mute-strip">
+    <button class="mute-btn" id="muteHumanBtn" onclick="toggleMute('human')">
+      <span class="mute-icon">🎙</span>
+      <span id="muteHumanLabel">HUMAN VOICE</span>
+    </button>
+    <button class="mute-btn" id="muteMediaBtn" onclick="toggleMute('media')">
+      <span class="mute-icon">📺</span>
+      <span id="muteMediaLabel">MEDIA / TV</span>
+    </button>
+  </div>
 
   <!-- ── CLARITY CHAIN ── -->
   <div class="chain" id="chainDisplay" style="margin-top:14px">
@@ -457,6 +494,8 @@ const SLIDERS = [
 // ═══════════════════════════════════════════════════════════════
 let active=false, overlayMode=false, ultraMode=false;
 let sourceMode='auto'; // 'auto' | 'human' | 'media'
+let muteHuman=false, muteMedia=false;
+let muteGain=null; // dedicated gain node driven by classifier
 let ctx=null, stream=null;
 let gain=null, hp=null, lp=null, comp=null, presence=null;
 let upComp=null, limiter=null, preGain=null;
@@ -862,6 +901,7 @@ function tick(){
     const sampleRate = ctx ? ctx.sampleRate : 44100;
     const cls = classifySource(inData, timeData, sampleRate);
     updateClassifierUI(cls);
+    applyMuteGain(cls.verdict);
   } else if(inAvg <= 0.005){
     document.getElementById('srcBadge').className='silence';
     document.getElementById('srcBadge').textContent='◈ SILENCE';
@@ -979,6 +1019,10 @@ async function toggleEngage(){
     gain = ctx.createGain();
     gain.gain.value = params.voiceBoost;
 
+    // MUTE GATE — controlled by classifier verdict + mute toggles
+    muteGain = ctx.createGain();
+    muteGain.gain.value = 1.0;
+
     // ── Output Analyser ──
     outAn = ctx.createAnalyser();
     outAn.fftSize = 256;
@@ -1017,7 +1061,8 @@ async function toggleEngage(){
     comp.connect(gain);
     gain.connect(upComp);
     upComp.connect(limiter);
-    limiter.connect(outAn);
+    limiter.connect(muteGain);
+    muteGain.connect(outAn);
     outAn.connect(ctx.destination);
 
     if(ultraMode) applyUltraChain();
@@ -1044,7 +1089,9 @@ function stopAll(){
   try{ ctx&&ctx.close(); }catch(_){}
   stream&&stream.getTracks().forEach(t=>t.stop());
   ctx=null; stream=null; inAn=null; outAn=null; timeAn=null;
-  gain=null; hp=null; lp=null; comp=null; presence=null; upComp=null; limiter=null; preGain=null;
+  gain=null; hp=null; lp=null; comp=null; presence=null; upComp=null; limiter=null; preGain=null; muteGain=null;
+  muteHuman=false; muteMedia=false;
+  resetMuteBtns();
   active=false;
   rmsHistory=[]; fluxHistory=[]; silenceBursts=[]; sibHistory=[]; silenceRuns=0; frameCount=0; prevFreqData=null; clsSmooth={human:0.5,media:0.5};
 
@@ -1078,6 +1125,62 @@ function setError(msg){
   const b=document.getElementById('errBanner');
   if(msg){ b.textContent='⚠ '+msg; b.style.display='block'; }
   else b.style.display='none';
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MUTE ENGINE
+// muteGain node sits at end of chain.
+// Classifier verdict drives it every tick when in AUTO mode.
+// Manual mute locks it regardless of classifier.
+// ═══════════════════════════════════════════════════════════════
+function toggleMute(src){
+  if(src === 'human'){
+    muteHuman = !muteHuman;
+    // Can't mute both — release media mute if both would be muted
+    if(muteHuman && muteMedia){ muteMedia=false; applyMuteBtnState('media', false); }
+    applyMuteBtnState('human', muteHuman);
+  } else {
+    muteMedia = !muteMedia;
+    if(muteMedia && muteHuman){ muteHuman=false; applyMuteBtnState('human', false); }
+    applyMuteBtnState('media', muteMedia);
+  }
+  applyMuteGain(null); // force immediate update with current verdict
+}
+
+function applyMuteBtnState(src, muted){
+  const btn   = document.getElementById('mute' + (src==='human'?'Human':'Media') + 'Btn');
+  const label = document.getElementById('mute' + (src==='human'?'Human':'Media') + 'Label');
+  if(muted){
+    btn.className   = 'mute-btn muted-' + src;
+    label.textContent = src==='human' ? '✕ HUMAN MUTED' : '✕ MEDIA MUTED';
+  } else {
+    btn.className   = 'mute-btn';
+    label.textContent = src==='human' ? 'HUMAN VOICE' : 'MEDIA / TV';
+  }
+}
+
+function resetMuteBtns(){
+  applyMuteBtnState('human', false);
+  applyMuteBtnState('media', false);
+}
+
+// Called every tick with current classifier verdict ('HUMAN'|'MEDIA'|'MIXED'|null)
+// null = use last known verdict
+let _lastVerdict = 'MIXED';
+function applyMuteGain(verdict){
+  if(verdict) _lastVerdict = verdict;
+  if(!muteGain) return;
+
+  const v = _lastVerdict;
+  let targetGain = 1.0;
+
+  if(muteHuman && v === 'HUMAN') targetGain = 0.0;
+  else if(muteMedia && v === 'MEDIA') targetGain = 0.0;
+  else targetGain = 1.0;
+
+  // Smooth transition — 20ms ramp prevents clicks
+  muteGain.gain.cancelScheduledValues(muteGain.context.currentTime);
+  muteGain.gain.setTargetAtTime(targetGain, muteGain.context.currentTime, 0.02);
 }
 
 // ═══════════════════════════════════════════════════════════════
