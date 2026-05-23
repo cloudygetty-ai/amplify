@@ -51,6 +51,10 @@ body.overlay-mode .controls{display:none}
 .tb-btn.active-green{border-color:#00ff9d;background:rgba(0,255,157,.08);color:#00ff9d}
 .tb-btn.active-red{border-color:#ef4444;background:rgba(239,68,68,.08);color:#ef4444}
 .tb-btn.active-amber{border-color:#f59e0b;background:rgba(245,158,11,.08);color:#f59e0b}
+.tb-btn.active-ultra{border-color:#ff3cac;background:rgba(255,60,172,.1);color:#ff3cac;box-shadow:0 0 12px rgba(255,60,172,.3);animation:pulse-ultra 1.2s ease-in-out infinite}
+@keyframes pulse-ultra{0%,100%{box-shadow:0 0 8px rgba(255,60,172,.3)}50%{box-shadow:0 0 22px rgba(255,60,172,.7)}}
+.ultra-badge{display:none;margin:8px 18px;padding:8px 14px;border:1px solid #ff3cac;background:rgba(255,60,172,.07);font-size:10px;letter-spacing:.2em;color:#ff3cac;text-align:center}
+.ultra-badge.on{display:block}
 
 /* source badge */
 #srcBadge{
@@ -166,6 +170,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
   <div class="toggle-group">
     <div id="srcBadge" class="silence">◈ AWAITING SIGNAL</div>
     <button class="tb-btn" id="overlayBtn" onclick="toggleOverlay()">⊞ OVERLAY</button>
+    <button class="tb-btn" id="ultraBtn" onclick="toggleUltra()">⚡ ULTRA</button>
     <button class="tb-btn" id="engageBtnTop" onclick="toggleEngage()">▶ ENGAGE</button>
   </div>
 </div>
@@ -187,6 +192,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
   </div>
 
   <div class="error-banner" id="errBanner" style="display:none"></div>
+  <div class="ultra-badge" id="ultraBadge">⚡ ULTRA MODE — 1dB → 33dB // PRE-GAIN × 45 → EXPANDER → LIMITER</div>
 
   <!-- ── SOURCE CLASSIFIER ── -->
   <div class="classifier">
@@ -310,9 +316,10 @@ const SLIDERS = [
 // ═══════════════════════════════════════════════════════════════
 // STATE
 // ═══════════════════════════════════════════════════════════════
-let active=false, overlayMode=false;
+let active=false, overlayMode=false, ultraMode=false;
 let ctx=null, stream=null;
 let gain=null, hp=null, lp=null, comp=null, presence=null;
+let upComp=null, limiter=null, preGain=null;
 let inAn=null, outAn=null, timeAn=null, raf=null;
 let nf=-60, params={...PRESETS["Low Voice"]}, preset="Low Voice";
 
@@ -735,6 +742,46 @@ function tick(){
 // ═══════════════════════════════════════════════════════════════
 // ENGAGE / DISENGAGE
 // ═══════════════════════════════════════════════════════════════
+function applyUltraChain(){
+  if(!preGain || !comp || !gain || !upComp || !limiter) return;
+  if(ultraMode){
+    // 1dB input (~0.112 amplitude) → 33dB perceived output
+    // 33dB - 1dB = 32dB gain needed = ×39.8 linear
+    // Split: preGain ×45 (headroom) + comp brings it into range + limiter clamps
+    preGain.gain.value = 45;
+    comp.threshold.value = -72;   // gate opens at nearly silent input
+    comp.ratio.value = 20;        // heavy compression to normalize levels
+    comp.attack.value = 0.001;
+    comp.release.value = 0.05;
+    gain.gain.value = Math.max(params.voiceBoost, 6); // minimum ×6 in ultra
+    upComp.ratio.value = 0.15;    // strong upward expansion
+    limiter.threshold.value = -0.5;
+  } else {
+    preGain.gain.value = 1.0;
+    comp.threshold.value = params.threshold;
+    comp.ratio.value = 12;
+    comp.attack.value = 0.002;
+    comp.release.value = 0.08;
+    gain.gain.value = params.voiceBoost;
+    upComp.ratio.value = 0.2;
+    limiter.threshold.value = -1.0;
+  }
+}
+
+function toggleUltra(){
+  ultraMode = !ultraMode;
+  const btn = document.getElementById('ultraBtn');
+  const badge = document.getElementById('ultraBadge');
+  btn.className = 'tb-btn' + (ultraMode ? ' active-ultra' : '');
+  btn.textContent = ultraMode ? '⚡ ULTRA ON' : '⚡ ULTRA';
+  badge.className = 'ultra-badge' + (ultraMode ? ' on' : '');
+  // Update chain display
+  document.getElementById('cn5').textContent = ultraMode
+    ? 'ULTRA ×45'
+    : `GAIN ×${params.voiceBoost.toFixed(1)}`;
+  applyUltraChain();
+}
+
 async function toggleEngage(){
   if(active){ stopAll(); return; }
   setError(null);
@@ -794,19 +841,43 @@ async function toggleEngage(){
     outAn.fftSize = 256;
     outAn.smoothingTimeConstant = .75;
 
+    // ── Pre-gain stage (ultra mode: ×45 to lift 1dB → ~33dB perceived) ──
+    preGain = ctx.createGain();
+    preGain.gain.value = 1.0; // set by ultraMode
+
+    // ── Upward expander (makes quiet louder, leaves loud alone) ──
+    upComp = ctx.createDynamicsCompressor();
+    upComp.threshold.value = -80;
+    upComp.knee.value = 30;
+    upComp.ratio.value = 0.2;  // ratio < 1 = upward expansion
+    upComp.attack.value = 0.001;
+    upComp.release.value = 0.05;
+
+    // ── Brick-wall limiter (prevents clipping after massive gain) ──
+    limiter = ctx.createDynamicsCompressor();
+    limiter.threshold.value = -1.0;
+    limiter.knee.value = 0;
+    limiter.ratio.value = 20;
+    limiter.attack.value = 0.001;
+    limiter.release.value = 0.1;
+
     // ── Wire graph ──
-    // Input tap (pre-EQ)
     source.connect(inAn);
     source.connect(timeAn);
 
-    // Signal chain
-    source.connect(hp);
+    // Signal chain: preGain → HP → presence → LP → comp → gain → upComp → limiter → out
+    source.connect(preGain);
+    preGain.connect(hp);
     hp.connect(presence);
     presence.connect(lp);
     lp.connect(comp);
     comp.connect(gain);
-    gain.connect(outAn);
+    gain.connect(upComp);
+    upComp.connect(limiter);
+    limiter.connect(outAn);
     outAn.connect(ctx.destination);
+
+    if(ultraMode) applyUltraChain();
 
     raf = requestAnimationFrame(tick);
     active = true;
@@ -830,7 +901,7 @@ function stopAll(){
   try{ ctx&&ctx.close(); }catch(_){}
   stream&&stream.getTracks().forEach(t=>t.stop());
   ctx=null; stream=null; inAn=null; outAn=null; timeAn=null;
-  gain=null; hp=null; lp=null; comp=null; presence=null;
+  gain=null; hp=null; lp=null; comp=null; presence=null; upComp=null; limiter=null; preGain=null;
   active=false;
   rmsHistory=[]; fluxHistory=[]; silenceBursts=[]; sibHistory=[]; silenceRuns=0; frameCount=0; prevFreqData=null; clsSmooth={human:0.5,media:0.5};
 
