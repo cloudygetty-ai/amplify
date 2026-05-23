@@ -316,9 +316,16 @@ let gain=null, hp=null, lp=null, comp=null, presence=null;
 let inAn=null, outAn=null, timeAn=null, raf=null;
 let nf=-60, params={...PRESETS["Low Voice"]}, preset="Low Voice";
 
-// Classifier state
-let pitchHistory=[], flatHistory=[], dynHistory=[];
-let frameCount=0;
+// Classifier state v2
+let frameCount = 0;
+// Rolling buffers (60 frames @ ~60fps = ~1 second of history)
+let prevFreqData = null;
+let rmsHistory = [];        // for AMR
+let fluxHistory = [];       // spectral flux
+let silenceRuns = 0;        // consecutive silent frames
+let silenceBursts = [];     // burst lengths
+let sibHistory = [];        // sibilance variance
+let clsSmooth = {human:0.5, media:0.5}; // smoothed output
 
 // ═══════════════════════════════════════════════════════════════
 // OVERLAY TOGGLE
@@ -439,110 +446,161 @@ function classifySource(freqData, timeData, sampleRate){
   const N = freqData.length;
   const binHz = sampleRate / (N * 2);
 
-  // ── Spectral Flatness (Wiener entropy) ──
-  // Geometric mean / arithmetic mean of spectrum
-  let geoSum = 0, arith = 0, nonZero = 0;
-  for(let i=1;i<N;i++){
-    const v = freqData[i]/255;
-    if(v > 0.001){ geoSum += Math.log(v); nonZero++; }
-    arith += v;
+  // ── 1. RMS envelope (current frame) ──
+  let rmsSum = 0;
+  for(let i=0;i<timeData.length;i++){
+    const s = (timeData[i]-128)/128;
+    rmsSum += s*s;
   }
-  const sfm = nonZero>0 ? Math.exp(geoSum/nonZero) / (arith/N + 1e-9) : 0;
-  // sfm near 1 = flat (noise/music), near 0 = tonal (speech)
+  const rms = Math.sqrt(rmsSum/timeData.length);
 
-  // ── Formant Band Energy (F1+F2 vs total) ──
-  // F1: 300–900Hz, F2: 900–2500Hz
-  let f1Energy=0, f2Energy=0, totalEnergy=0;
+  // ── 2. SPECTRAL FLUX — frame-to-frame spectral change ──
+  // High flux = formants shifting (human); Low = steady music/broadcast
+  let flux = 0;
+  if(prevFreqData){
+    for(let i=0;i<N;i++){
+      const diff = (freqData[i] - prevFreqData[i]) / 255;
+      flux += diff * diff;
+    }
+    flux = Math.sqrt(flux / N);
+  }
+  prevFreqData = new Uint8Array(freqData);
+  fluxHistory.push(flux);
+  if(fluxHistory.length > 45) fluxHistory.shift();
+  const fluxMean = fluxHistory.reduce((a,b)=>a+b,0)/fluxHistory.length;
+  const fluxVar  = variance(fluxHistory);
+
+  // ── 3. AMPLITUDE MODULATION RATE ──
+  // Human syllables modulate at 3–8 Hz; broadcast is AGC-compressed flat
+  rmsHistory.push(rms);
+  if(rmsHistory.length > 60) rmsHistory.shift();
+  const rmsVar = variance(rmsHistory);
+  // Count RMS zero-crossings (relative to mean) — proxy for modulation rate
+  const rmsMean = rmsHistory.reduce((a,b)=>a+b,0)/rmsHistory.length;
+  let rmsCross = 0;
+  for(let i=1;i<rmsHistory.length;i++){
+    if((rmsHistory[i]>rmsMean) !== (rmsHistory[i-1]>rmsMean)) rmsCross++;
+  }
+  const amRate = rmsCross / rmsHistory.length; // 0–1, human ~0.15–0.4
+
+  // ── 4. SUB-BASS vs LOW-MID RATIO ──
+  // Music/TV: strong sub-bass; Human voice: minimal below 100Hz
+  let subBass=0, lowMid=0;
   for(let i=0;i<N;i++){
     const hz = i * binHz;
     const v = (freqData[i]/255)**2;
-    totalEnergy += v;
-    if(hz>=300 && hz<=900)  f1Energy += v;
-    if(hz>900  && hz<=2500) f2Energy += v;
+    if(hz < 100) subBass += v;
+    else if(hz < 350) lowMid += v;
   }
-  const formantRatio = totalEnergy > 0 ? (f1Energy + f2Energy*0.8) / (totalEnergy + 1e-9) : 0;
+  const subRatio = subBass / (lowMid + subBass + 1e-9);
+  // High subRatio → music/TV; Low → human
 
-  // ── Zero Crossing Rate (time domain) ──
-  let zcr = 0;
-  for(let i=1;i<timeData.length;i++){
-    if((timeData[i]-128>=0) !== (timeData[i-1]-128>=0)) zcr++;
+  // ── 5. SILENCE BURST PATTERN ──
+  // Human: natural pauses 100–800ms; Radio: nearly continuous
+  const isSilent = rms < 0.012;
+  if(isSilent){
+    silenceRuns++;
+  } else {
+    if(silenceRuns > 3 && silenceRuns < 50){ // 50ms–800ms bursts = human
+      silenceBursts.push(silenceRuns);
+      if(silenceBursts.length > 20) silenceBursts.shift();
+    }
+    silenceRuns = 0;
   }
-  const zcrNorm = zcr / timeData.length;
+  const burstScore = silenceBursts.length > 3
+    ? Math.min(1, silenceBursts.length / 12)
+    : 0;
 
-  // ── Dynamic Range (short-term) ──
-  let dMin=255, dMax=0;
-  for(let i=0;i<timeData.length;i++){
-    if(timeData[i]<dMin) dMin=timeData[i];
-    if(timeData[i]>dMax) dMax=timeData[i];
-  }
-  const dynRange = (dMax - dMin) / 255;
-  dynHistory.push(dynRange);
-  if(dynHistory.length>30) dynHistory.shift();
-  const dynVar = variance(dynHistory);
-
-  // ── Spectral Centroid shift (pitch proxy) ──
-  let centroidNum=0, centroidDen=0;
+  // ── 6. SIBILANCE BURST (4–8kHz variance) ──
+  // Human: brief sibilant bursts; music: sustained; broadcast speech: de-essed
+  let sibEnergy = 0;
   for(let i=0;i<N;i++){
-    centroidNum += (i * binHz) * (freqData[i]/255);
-    centroidDen += freqData[i]/255;
+    const hz = i * binHz;
+    if(hz >= 4000 && hz <= 8000) sibEnergy += (freqData[i]/255)**2;
   }
-  const centroid = centroidDen > 0.01 ? centroidNum/centroidDen : 0;
-  pitchHistory.push(centroid);
-  if(pitchHistory.length>20) pitchHistory.shift();
-  const pitchVar = variance(pitchHistory) / (1000*1000 + 1); // normalize
-  flatHistory.push(sfm);
-  if(flatHistory.length>20) flatHistory.shift();
+  sibHistory.push(sibEnergy);
+  if(sibHistory.length > 30) sibHistory.shift();
+  const sibVar = variance(sibHistory);
 
-  // ── Scoring ──
-  // Human voice profile:
-  //   sfm < 0.15 (tonal, not flat)
-  //   formantRatio > 0.25 (energy in speech bands)
-  //   pitchVar moderate (0.005–0.3) — not zero (music) not huge (noise)
-  //   zcrNorm < 0.25 (voiced)
-  //   dynVar > 0.005 (live dynamics)
+  // ── 7. FORMANT TRANSITION SCORE ──
+  // True human speech: F1/F2 centroids shift rapidly across frames
+  // Use spectral centroid of 300–3000Hz band
+  let centNum=0, centDen=0;
+  for(let i=0;i<N;i++){
+    const hz = i * binHz;
+    if(hz < 300 || hz > 3000) continue;
+    const v = freqData[i]/255;
+    centNum += hz * v;
+    centDen += v;
+  }
+  const centroid = centDen > 0.05 ? centNum/centDen : 0;
 
+  // ── SCORING ──
+  // Each feature votes with weighted confidence
   let humanScore = 0;
   let mediaScore = 0;
 
-  // Flatness: low = human
-  const flatScore = Math.max(0, 1 - sfm*4);
-  humanScore += flatScore * 30;
-  mediaScore += (1-flatScore) * 20;
+  // Spectral flux: human has moderate-high variable flux
+  // Music: high sustained flux; compressed broadcast: low
+  const fluxScore = Math.min(1, fluxMean * 15);
+  const fluxVarScore = Math.min(1, fluxVar * 200);
+  humanScore += fluxVarScore * 22;   // humans: flux VARIES (speech rhythm)
+  mediaScore += (1-fluxVarScore) * 15; // broadcast: steady flux
 
-  // Formant energy
-  const formScore = Math.min(1, formantRatio * 2.5);
-  humanScore += formScore * 30;
-  mediaScore += (1-formScore) * 15;
+  // AMR: human syllables = moderate crossing rate 0.1–0.4
+  const amHuman = amRate > 0.08 && amRate < 0.45 ? 1 - Math.abs(amRate-0.25)/0.25 : 0;
+  const amMedia = amRate < 0.06 || amRate > 0.5 ? 1 : 0;
+  humanScore += amHuman * 25;
+  mediaScore += amMedia * 20;
 
-  // Pitch variance (moderate = human)
-  const pvClamp = Math.min(pitchVar, 1);
-  const pvScore = pvClamp < 0.05 ? pvClamp/0.05 : pvClamp < 0.5 ? 1 : Math.max(0,1-(pvClamp-0.5)*2);
-  humanScore += pvScore * 20;
-  mediaScore += (1-pvScore) * 10;
+  // Sub-bass: low sub → human; high sub → music/TV
+  humanScore += (1 - subRatio*3) > 0 ? (1 - subRatio*3) * 15 : 0;
+  mediaScore += Math.min(1, subRatio*4) * 18;
 
-  // ZCR: low = voiced human
-  const zcrScore = Math.max(0, 1 - zcrNorm*8);
-  humanScore += zcrScore * 10;
-  mediaScore += (1-zcrScore) * 10;
+  // Silence bursts: present = human patterns
+  humanScore += burstScore * 20;
+  mediaScore += (1 - burstScore) * 10;
 
-  // Dynamic variance: high = human
-  const dynScore = Math.min(1, dynVar * 80);
-  humanScore += dynScore * 10;
-  mediaScore += (1-dynScore) * 10;
+  // Sibilance variance: bursty = human; flat = music or de-essed broadcast
+  const sibScore = Math.min(1, sibVar * 150);
+  humanScore += sibScore * 10;
+  mediaScore += (1-sibScore) * 8;
 
+  // RMS variance: human speech has high short-term dynamics
+  const rmsVarScore = Math.min(1, rmsVar * 400);
+  humanScore += rmsVarScore * 8;
+  mediaScore += (1-rmsVarScore) * 8;
+
+  // Total
   const total = humanScore + mediaScore + 1e-9;
-  const humanPct = humanScore / total;
-  const mediaPct  = mediaScore  / total;
-  const confidence = Math.abs(humanPct - mediaPct);
+  const humanRaw = humanScore / total;
+  const mediaRaw  = mediaScore  / total;
+
+  // Temporal smoothing — prevents flicker
+  clsSmooth.human = clsSmooth.human * 0.82 + humanRaw * 0.18;
+  clsSmooth.media  = clsSmooth.media  * 0.82 + mediaRaw  * 0.18;
+
+  const confidence = Math.abs(clsSmooth.human - clsSmooth.media);
+  let verdict = 'MIXED';
+  if(confidence > 0.12){
+    verdict = clsSmooth.human > clsSmooth.media ? 'HUMAN' : 'MEDIA';
+  }
 
   return {
-    sfm: Math.min(1, sfm),
-    formantRatio: Math.min(1, formantRatio),
-    pitchVar: Math.min(1, pvClamp),
-    zcrNorm: Math.min(1, zcrNorm*4),
-    dynVar: Math.min(1, dynVar*10),
-    humanPct, mediaPct, confidence,
-    verdict: confidence < 0.15 ? 'MIXED' : humanPct > mediaPct ? 'HUMAN' : 'MEDIA'
+    sfm:         Math.min(1, subRatio * 3),
+    formantRatio:Math.min(1, fluxVarScore),
+    pitchVar:    Math.min(1, amRate * 2.5),
+    zcrNorm:     Math.min(1, burstScore),
+    dynVar:      Math.min(1, rmsVarScore),
+    humanPct:    clsSmooth.human,
+    mediaPct:    clsSmooth.media,
+    confidence,
+    verdict,
+    // debug labels
+    _flux: fluxMean.toFixed(3),
+    _amr:  amRate.toFixed(3),
+    _sub:  subRatio.toFixed(3),
+    _sib:  sibVar.toFixed(4),
   };
 }
 
@@ -755,7 +813,7 @@ function stopAll(){
   ctx=null; stream=null; inAn=null; outAn=null; timeAn=null;
   gain=null; hp=null; lp=null; comp=null; presence=null;
   active=false;
-  pitchHistory=[]; flatHistory=[]; dynHistory=[]; frameCount=0;
+  rmsHistory=[]; fluxHistory=[]; silenceBursts=[]; sibHistory=[]; silenceRuns=0; frameCount=0; prevFreqData=null; clsSmooth={human:0.5,media:0.5};
 
   setStatus('STANDBY', false);
   bars.forEach(b=>{ b.style.height='0%'; });
