@@ -113,6 +113,41 @@ h1{font-size:38px;font-weight:700;letter-spacing:-.02em;background:linear-gradie
   transition:all .2s;
 }
 .cls-verdict.v-human{border-color:#00ff9d;color:#00ff9d;background:rgba(0,255,157,.05)}
+
+/* ── SOURCE MODE SWITCH ── */
+.src-switch{
+  margin:12px 18px 0;display:flex;align-items:stretch;
+  border:1px solid #1a1a1a;overflow:hidden;
+}
+.src-switch-btn{
+  flex:1;padding:10px 8px;font-size:10px;letter-spacing:.2em;
+  border:none;background:transparent;color:#2a2a2a;
+  cursor:pointer;font-family:'Courier New',monospace;
+  transition:all .18s;position:relative;
+}
+.src-switch-btn:not(:last-child){border-right:1px solid #1a1a1a}
+.src-switch-btn.active-human{
+  background:rgba(0,255,157,.1);color:#00ff9d;
+  box-shadow:inset 0 -2px 0 #00ff9d;
+}
+.src-switch-btn.active-media{
+  background:rgba(245,158,11,.1);color:#f59e0b;
+  box-shadow:inset 0 -2px 0 #f59e0b;
+}
+.src-switch-btn.active-auto{
+  background:rgba(167,139,250,.08);color:#a78bfa;
+  box-shadow:inset 0 -2px 0 #a78bfa;
+}
+.src-switch-label{
+  display:block;font-size:8px;letter-spacing:.18em;
+  margin-bottom:3px;opacity:.6;
+}
+.src-mode-desc{
+  margin:0 18px 14px;padding:8px 12px;
+  font-size:9px;letter-spacing:.15em;line-height:1.6;
+  border:1px solid #141414;border-top:none;
+  color:#2a2a2a;background:#080808;
+}
 .cls-verdict.v-media{border-color:#f59e0b;color:#f59e0b;background:rgba(245,158,11,.05)}
 .cls-verdict.v-mixed{border-color:#a78bfa;color:#a78bfa;background:rgba(167,139,250,.05)}
 
@@ -294,6 +329,23 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
     <div class="cls-verdict" id="clsVerdict">AWAITING SIGNAL</div>
   </div>
 
+  <!-- ── SOURCE MODE SWITCH ── -->
+  <div class="src-switch">
+    <button class="src-switch-btn active-auto" id="srcHuman" onclick="setSourceMode('human')">
+      <span class="src-switch-label">MODE</span>
+      ◈ HUMAN VOICE
+    </button>
+    <button class="src-switch-btn active-auto" id="srcAuto" onclick="setSourceMode('auto')">
+      <span class="src-switch-label">MODE</span>
+      ⟳ AUTO DETECT
+    </button>
+    <button class="src-switch-btn active-auto" id="srcMedia" onclick="setSourceMode('media')">
+      <span class="src-switch-label">MODE</span>
+      ◈ MEDIA / TV
+    </button>
+  </div>
+  <div class="src-mode-desc" id="srcModeDesc">AUTO — classifier determines source type in real time</div>
+
   <!-- ── CLARITY CHAIN ── -->
   <div class="chain" id="chainDisplay" style="margin-top:14px">
     <div class="chain-node" id="cn0">PRE-EMPH</div>
@@ -404,6 +456,7 @@ const SLIDERS = [
 // STATE
 // ═══════════════════════════════════════════════════════════════
 let active=false, overlayMode=false, ultraMode=false;
+let sourceMode='auto'; // 'auto' | 'human' | 'media'
 let ctx=null, stream=null;
 let gain=null, hp=null, lp=null, comp=null, presence=null;
 let upComp=null, limiter=null, preGain=null;
@@ -724,6 +777,9 @@ function variance(arr){
 }
 
 function updateClassifierUI(cls){
+  // Manual lock — don't override user's choice
+  if(sourceMode !== 'auto') return;
+
   const pct = v => Math.round(v*100);
   document.getElementById('cPitch').style.width = pct(cls.pitchVar)+'%';
   document.getElementById('cPitchVal').textContent = pct(cls.pitchVar)+'%';
@@ -1023,6 +1079,79 @@ function setError(msg){
   if(msg){ b.textContent='⚠ '+msg; b.style.display='block'; }
   else b.style.display='none';
 }
+
+// ═══════════════════════════════════════════════════════════════
+// SOURCE MODE — manual override of classifier + DSP profile
+// human: tight band 200–3500Hz, heavy presence, fast gate
+// media: wide band 80–12000Hz, flat EQ, light compression
+// auto:  classifier drives everything
+// ═══════════════════════════════════════════════════════════════
+const SRC_PROFILES = {
+  human: {
+    lowCut: 200, highCut: 3500,
+    presenceGain: 6, presenceFreq: 2500,
+    threshold: -45, ratio: 14,
+    attack: 0.001, release: 0.06,
+    desc: 'HUMAN — narrow band 200–3500Hz, +6dB presence, fast gate for voice isolation',
+    badge: '◈ HUMAN VOICE', badgeClass: 'human',
+  },
+  media: {
+    lowCut: 80, highCut: 12000,
+    presenceGain: 1, presenceFreq: 4000,
+    threshold: -20, ratio: 4,
+    attack: 0.01, release: 0.15,
+    desc: 'MEDIA — wide band 80Hz–12kHz, flat EQ, light compression for TV/radio clarity',
+    badge: '◈ MEDIA / BROADCAST', badgeClass: 'media',
+  },
+  auto: {
+    desc: 'AUTO — classifier determines source type in real time',
+    badge: '◈ AWAITING SIGNAL', badgeClass: 'silence',
+  }
+};
+
+function setSourceMode(mode){
+  sourceMode = mode;
+  const btns = {
+    human: document.getElementById('srcHuman'),
+    auto:  document.getElementById('srcAuto'),
+    media: document.getElementById('srcMedia'),
+  };
+  // Reset all
+  Object.values(btns).forEach(b => b.className = 'src-switch-btn');
+  btns[mode].className = 'src-switch-btn active-' + mode;
+
+  const desc = document.getElementById('srcModeDesc');
+  desc.textContent = SRC_PROFILES[mode].desc;
+
+  // Apply DSP profile immediately if active
+  if(mode !== 'auto'){
+    const p = SRC_PROFILES[mode];
+    if(hp)       hp.frequency.value       = p.lowCut;
+    if(lp)       lp.frequency.value       = p.highCut;
+    if(presence){ presence.gain.value     = p.presenceGain;
+                  presence.frequency.value = p.presenceFreq; }
+    if(comp && !ultraMode){
+      comp.threshold.value = p.threshold;
+      comp.ratio.value     = p.ratio;
+      comp.attack.value    = p.attack;
+      comp.release.value   = p.release;
+    }
+    // Force badge
+    const badge = document.getElementById('srcBadge');
+    badge.textContent = p.badge;
+    badge.className   = p.badgeClass;
+    // Force verdict display
+    const verd = document.getElementById('clsVerdict');
+    verd.textContent = mode === 'human'
+      ? '▸ HUMAN VOICE [MANUAL LOCK]'
+      : '▸ MEDIA / BROADCAST [MANUAL LOCK]';
+    verd.className = 'cls-verdict v-' + mode;
+  } else {
+    // Restore params from sliders
+    applyParamsToGraph();
+  }
+}
+
 
 // ═══════════════════════════════════════════════════════════════
 // CC ENGINE — Web Speech API (SpeechRecognition)
