@@ -466,14 +466,14 @@ function classifySource(freqData, timeData, sampleRate){
   }
   prevFreqData = new Uint8Array(freqData);
   fluxHistory.push(flux);
-  if(fluxHistory.length > 45) fluxHistory.shift();
+  if(fluxHistory.length > 90) fluxHistory.shift();
   const fluxMean = fluxHistory.reduce((a,b)=>a+b,0)/fluxHistory.length;
   const fluxVar  = variance(fluxHistory);
 
   // ── 3. AMPLITUDE MODULATION RATE ──
   // Human syllables modulate at 3–8 Hz; broadcast is AGC-compressed flat
   rmsHistory.push(rms);
-  if(rmsHistory.length > 60) rmsHistory.shift();
+  if(rmsHistory.length > 180) rmsHistory.shift();
   const rmsVar = variance(rmsHistory);
   // Count RMS zero-crossings (relative to mean) — proxy for modulation rate
   const rmsMean = rmsHistory.reduce((a,b)=>a+b,0)/rmsHistory.length;
@@ -497,11 +497,11 @@ function classifySource(freqData, timeData, sampleRate){
 
   // ── 5. SILENCE BURST PATTERN ──
   // Human: natural pauses 100–800ms; Radio: nearly continuous
-  const isSilent = rms < 0.012;
+  const isSilent = rms < 0.035;
   if(isSilent){
     silenceRuns++;
   } else {
-    if(silenceRuns > 3 && silenceRuns < 50){ // 50ms–800ms bursts = human
+    if(silenceRuns > 2 && silenceRuns < 80){ // 33ms–1.3s bursts = human
       silenceBursts.push(silenceRuns);
       if(silenceBursts.length > 20) silenceBursts.shift();
     }
@@ -540,36 +540,55 @@ function classifySource(freqData, timeData, sampleRate){
   let humanScore = 0;
   let mediaScore = 0;
 
-  // Spectral flux: human has moderate-high variable flux
-  // Music: high sustained flux; compressed broadcast: low
-  const fluxScore = Math.min(1, fluxMean * 15);
-  const fluxVarScore = Math.min(1, fluxVar * 200);
-  humanScore += fluxVarScore * 22;   // humans: flux VARIES (speech rhythm)
-  mediaScore += (1-fluxVarScore) * 15; // broadcast: steady flux
+  // ── CALIBRATED SCORING v2.1 ──
+  // Weights tuned for real mic input (not lab conditions)
+  // Human voice baseline bias: live mic always has more variance than broadcast
 
-  // AMR: human syllables = moderate crossing rate 0.1–0.4
-  const amHuman = amRate > 0.08 && amRate < 0.45 ? 1 - Math.abs(amRate-0.25)/0.25 : 0;
-  const amMedia = amRate < 0.06 || amRate > 0.5 ? 1 : 0;
-  humanScore += amHuman * 25;
-  mediaScore += amMedia * 20;
+  // SPECTRAL FLUX VARIANCE
+  // Human: flux jumps between phonemes → high variance over 90 frames
+  // Broadcast: already processed, flux is smoother/steadier
+  // Scale: fluxVar typically 0.0001–0.005 for human, <0.0001 for broadcast
+  const fluxVarScore = Math.min(1, fluxVar * 1200);
+  humanScore += fluxVarScore * 28;
+  mediaScore += (1 - fluxVarScore) * 18;
 
-  // Sub-bass: low sub → human; high sub → music/TV
-  humanScore += (1 - subRatio*3) > 0 ? (1 - subRatio*3) * 15 : 0;
-  mediaScore += Math.min(1, subRatio*4) * 18;
+  // AMPLITUDE MODULATION RATE
+  // Human syllable rhythm: amRate 0.10–0.40 (crosses RMS mean regularly)
+  // Broadcast AGC: amRate < 0.07 (compressed flat) OR music > 0.50 (fast)
+  // Wider acceptance window for real-world voice (whispering, far-field)
+  const amHuman = amRate > 0.06 && amRate < 0.50
+    ? 1 - Math.abs(amRate - 0.22) / 0.22
+    : 0;
+  const amMedia = amRate < 0.05 ? 1 : amRate > 0.55 ? 0.7 : 0;
+  humanScore += Math.max(0, amHuman) * 28;
+  mediaScore += amMedia * 18;
 
-  // Silence bursts: present = human patterns
-  humanScore += burstScore * 20;
-  mediaScore += (1 - burstScore) * 10;
+  // SUB-BASS — softer penalty, mic acoustics vary wildly
+  // Only score media if sub-bass is dominant (>30% of low energy)
+  // Human voice: subRatio typically 0.05–0.18 in real rooms
+  if(subRatio > 0.28) mediaScore += Math.min(1,(subRatio-0.28)*5) * 14;
+  if(subRatio < 0.22) humanScore += (1 - subRatio/0.22) * 8;
 
-  // Sibilance variance: bursty = human; flat = music or de-essed broadcast
-  const sibScore = Math.min(1, sibVar * 150);
+  // SILENCE BURSTS — strongest human indicator
+  // Human speech: 3–15 natural pauses per 20 stored bursts
+  // Broadcast: nearly continuous → few bursts
+  humanScore += burstScore * 24;
+  mediaScore += Math.max(0, 0.6 - burstScore) * 12;
+
+  // SIBILANCE VARIANCE — bursty S/SH = human; steady highs = music
+  const sibScore = Math.min(1, sibVar * 600);
   humanScore += sibScore * 10;
-  mediaScore += (1-sibScore) * 8;
+  mediaScore += (1 - sibScore) * 8;
 
-  // RMS variance: human speech has high short-term dynamics
-  const rmsVarScore = Math.min(1, rmsVar * 400);
-  humanScore += rmsVarScore * 8;
-  mediaScore += (1-rmsVarScore) * 8;
+  // RMS VARIANCE — live speech is dynamic; broadcast is brick-wall limited
+  // Scale: rmsVar 0.003–0.02 for human, <0.002 for broadcast
+  const rmsVarScore = Math.min(1, rmsVar * 180);
+  humanScore += rmsVarScore * 10;
+  mediaScore += Math.max(0, 1 - rmsVarScore*2) * 8;
+
+  // BASELINE HUMAN PRIOR — mic input is more likely human than broadcast
+  // Removes false-media classification when all features are ambiguous
+  humanScore += 6;
 
   // Total
   const total = humanScore + mediaScore + 1e-9;
