@@ -156,6 +156,67 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
 .engage-btn.off{border:1px solid #00ff9d;background:rgba(0,255,157,.05);color:#00ff9d;box-shadow:0 0 20px rgba(0,255,157,.08)}
 .engage-btn.on{border:1px solid #ef4444;background:rgba(239,68,68,.07);color:#ef4444;box-shadow:0 0 20px rgba(239,68,68,.12)}
 .footer{position:relative;z-index:1;margin-top:18px;font-size:9px;color:#1a1a1a;letter-spacing:.2em;text-align:center}
+
+/* ── CC / SUBTITLES ── */
+.cc-wrap{
+  width:100%;max-width:680px;position:relative;z-index:1;
+  margin-top:10px;
+}
+.cc-bar{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:7px 14px;background:#090909;border:1px solid #1a1a1a;
+  border-bottom:none;
+}
+.cc-label{font-size:9px;letter-spacing:.25em;color:#252525}
+.cc-controls{display:flex;gap:8px;align-items:center}
+.cc-btn{
+  padding:3px 9px;font-size:9px;letter-spacing:.15em;
+  border:1px solid #1a1a1a;background:transparent;color:#3a3a3a;
+  cursor:pointer;border-radius:1px;font-family:'Courier New',monospace;
+  transition:all .15s;
+}
+.cc-btn.on{border-color:#00ff9d;background:rgba(0,255,157,.07);color:#00ff9d}
+.cc-lang{
+  padding:3px 6px;font-size:9px;letter-spacing:.1em;
+  border:1px solid #1a1a1a;background:#0d0d0d;color:#3a3a3a;
+  cursor:pointer;font-family:'Courier New',monospace;outline:none;
+}
+.cc-box{
+  min-height:72px;max-height:160px;overflow-y:auto;
+  background:#050505;border:1px solid #1a1a1a;
+  padding:12px 16px;position:relative;
+}
+.cc-live{
+  font-size:13px;letter-spacing:.04em;line-height:1.7;
+  color:#aaaaaa;margin-bottom:6px;min-height:22px;
+  border-left:2px solid #00ff9d44;padding-left:10px;
+  font-style:italic;
+}
+.cc-live.active{color:#e0e0e0;border-left-color:#00ff9d}
+.cc-history{font-size:12px;letter-spacing:.03em;line-height:1.8;color:#444;padding-left:12px}
+.cc-history span{display:block;padding:1px 0;border-bottom:1px solid #0d0d0d}
+.cc-history span:last-child{color:#666}
+.cc-interim{color:#00ff9d88;font-style:italic}
+.cc-status{
+  font-size:9px;letter-spacing:.18em;color:#252525;
+  position:absolute;top:8px;right:12px;
+}
+.cc-status.listening{color:#00ff9d88}
+.cc-status.error{color:#ef444488}
+.cc-copy{
+  padding:3px 9px;font-size:9px;letter-spacing:.12em;
+  border:1px solid #1a1a1a;background:transparent;color:#252525;
+  cursor:pointer;border-radius:1px;font-family:'Courier New',monospace;
+  transition:all .15s;
+}
+.cc-copy:hover{border-color:#333;color:#555}
+.cc-clear{color:#333;cursor:pointer;font-size:9px;letter-spacing:.12em;
+  background:none;border:none;font-family:'Courier New',monospace;padding:3px 6px}
+.cc-clear:hover{color:#555}
+.cc-no-support{
+  padding:14px 16px;font-size:10px;letter-spacing:.15em;
+  color:#333;border:1px solid #1a1a1a;background:#050505;text-align:center;
+}
 </style>
 </head>
 <body>
@@ -171,6 +232,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
     <div id="srcBadge" class="silence">◈ AWAITING SIGNAL</div>
     <button class="tb-btn" id="overlayBtn" onclick="toggleOverlay()">⊞ OVERLAY</button>
     <button class="tb-btn" id="ultraBtn" onclick="toggleUltra()">⚡ ULTRA</button>
+    <button class="tb-btn" id="ccBtn" onclick="toggleCC()">◉ CC</button>
     <button class="tb-btn" id="engageBtnTop" onclick="toggleEngage()">▶ ENGAGE</button>
   </div>
 </div>
@@ -290,7 +352,32 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
   </div>
 </div>
 
-<div class="footer">HP → PRESENCE EQ → LP → COMPANDER → GAIN // HUMAN CLASSIFIER // WEB AUDIO API</div>
+<div class="cc-wrap" id="ccWrap" style="display:none">
+  <div class="cc-bar">
+    <span class="cc-label">CC // LIVE TRANSCRIPTION</span>
+    <div class="cc-controls">
+      <select class="cc-lang" id="ccLang" onchange="ccSetLang(this.value)">
+        <option value="en-US">EN</option>
+        <option value="es-ES">ES</option>
+        <option value="fr-FR">FR</option>
+        <option value="de-DE">DE</option>
+        <option value="pt-BR">PT</option>
+        <option value="zh-CN">ZH</option>
+        <option value="ja-JP">JA</option>
+        <option value="ar-SA">AR</option>
+      </select>
+      <button class="cc-copy" onclick="ccCopy()">COPY</button>
+      <button class="cc-clear" onclick="ccClear()">CLR</button>
+    </div>
+  </div>
+  <div class="cc-box" id="ccBox">
+    <div class="cc-status" id="ccStatus">IDLE</div>
+    <div class="cc-live" id="ccLive"></div>
+    <div class="cc-history" id="ccHistory"></div>
+  </div>
+</div>
+
+<div class="footer">HP → PRESENCE EQ → LP → COMPANDER → GAIN // HUMAN CLASSIFIER // CC // WEB AUDIO API</div>
 
 <script>
 // ═══════════════════════════════════════════════════════════════
@@ -936,6 +1023,156 @@ function setError(msg){
   if(msg){ b.textContent='⚠ '+msg; b.style.display='block'; }
   else b.style.display='none';
 }
+
+// ═══════════════════════════════════════════════════════════════
+// CC ENGINE — Web Speech API (SpeechRecognition)
+// Continuous mode, interim results, auto-restart on end
+// Language switchable at runtime
+// ═══════════════════════════════════════════════════════════════
+let ccActive = false;
+let ccRec = null;
+let ccTranscript = [];  // confirmed lines
+let ccLangVal = 'en-US';
+let ccRestarting = false;
+
+const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+function toggleCC(){
+  if(!SpeechRec){
+    document.getElementById('ccWrap').style.display='block';
+    document.getElementById('ccBox').innerHTML =
+      '<div class="cc-no-support">⚠ SPEECH RECOGNITION NOT SUPPORTED IN THIS BROWSER<br><span style="font-size:9px;color:#252525">USE CHROME OR EDGE</span></div>';
+    return;
+  }
+  ccActive = !ccActive;
+  const btn = document.getElementById('ccBtn');
+  const wrap = document.getElementById('ccWrap');
+  if(ccActive){
+    btn.className = 'tb-btn on';
+    btn.textContent = '◉ CC ON';
+    wrap.style.display = 'block';
+    ccStart();
+  } else {
+    btn.className = 'tb-btn';
+    btn.textContent = '◉ CC';
+    ccStop();
+  }
+}
+
+function ccStart(){
+  if(!SpeechRec || !ccActive) return;
+  ccRec = new SpeechRec();
+  ccRec.continuous = true;
+  ccRec.interimResults = true;
+  ccRec.maxAlternatives = 1;
+  ccRec.lang = ccLangVal;
+
+  ccRec.onstart = () => {
+    ccRestarting = false;
+    setCC_Status('LISTENING', 'listening');
+  };
+
+  ccRec.onresult = (e) => {
+    let interim = '';
+    let final = '';
+    for(let i = e.resultIndex; i < e.results.length; i++){
+      const t = e.results[i][0].transcript;
+      if(e.results[i].isFinal){
+        final += t;
+      } else {
+        interim += t;
+      }
+    }
+    // Render interim (live)
+    const liveEl = document.getElementById('ccLive');
+    liveEl.textContent = interim;
+    liveEl.className = 'cc-live' + (interim ? ' active' : '');
+
+    // Commit final to history
+    if(final.trim()){
+      ccTranscript.push(final.trim());
+      if(ccTranscript.length > 80) ccTranscript.shift();
+      renderCCHistory();
+      liveEl.textContent = '';
+      liveEl.className = 'cc-live';
+    }
+  };
+
+  ccRec.onerror = (e) => {
+    if(e.error === 'no-speech') return; // normal, ignore
+    if(e.error === 'not-allowed'){
+      setCC_Status('DENIED', 'error');
+      ccActive = false;
+      document.getElementById('ccBtn').className = 'tb-btn';
+      document.getElementById('ccBtn').textContent = '◉ CC';
+      return;
+    }
+    setCC_Status('ERR:' + e.error.toUpperCase(), 'error');
+  };
+
+  ccRec.onend = () => {
+    // Auto-restart unless user toggled off
+    if(ccActive && !ccRestarting){
+      ccRestarting = true;
+      setTimeout(() => { if(ccActive) ccStart(); }, 180);
+    } else {
+      setCC_Status('IDLE', '');
+    }
+  };
+
+  try { ccRec.start(); } catch(_){}
+}
+
+function ccStop(){
+  ccRestarting = false;
+  try { ccRec && ccRec.stop(); } catch(_){}
+  ccRec = null;
+  setCC_Status('IDLE', '');
+  document.getElementById('ccLive').textContent = '';
+  document.getElementById('ccLive').className = 'cc-live';
+}
+
+function renderCCHistory(){
+  const el = document.getElementById('ccHistory');
+  el.innerHTML = ccTranscript
+    .map((t,i) => `<span${i===ccTranscript.length-1?' style="color:#888"':''}>${t}</span>`)
+    .join('');
+  // Auto-scroll to bottom
+  const box = document.getElementById('ccBox');
+  box.scrollTop = box.scrollHeight;
+}
+
+function setCC_Status(text, cls){
+  const el = document.getElementById('ccStatus');
+  el.textContent = text;
+  el.className = 'cc-status' + (cls ? ' '+cls : '');
+}
+
+function ccSetLang(lang){
+  ccLangVal = lang;
+  if(ccActive){
+    ccRestarting = true;
+    try { ccRec && ccRec.stop(); } catch(_){}
+    setTimeout(ccStart, 250);
+  }
+}
+
+function ccCopy(){
+  const all = ccTranscript.join(' ');
+  if(!all) return;
+  navigator.clipboard.writeText(all).then(()=>{
+    const btn = document.querySelector('.cc-copy');
+    btn.textContent = 'COPIED';
+    setTimeout(()=>{ btn.textContent = 'COPY'; }, 1200);
+  });
+}
+
+function ccClear(){
+  ccTranscript = [];
+  document.getElementById('ccHistory').innerHTML = '';
+  document.getElementById('ccLive').textContent = '';
+}
+
 </script>
 </body>
 </html>
