@@ -375,11 +375,11 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
   <div class="mute-strip">
     <button class="mute-btn" id="muteHumanBtn" onclick="toggleMute('human')">
       <span class="mute-icon">🎙</span>
-      <span id="muteHumanLabel">HUMAN VOICE</span>
+      <span id="muteHumanLabel">MUTE HUMAN</span>
     </button>
     <button class="mute-btn" id="muteMediaBtn" onclick="toggleMute('media')">
       <span class="mute-icon">📺</span>
-      <span id="muteMediaLabel">MEDIA / TV</span>
+      <span id="muteMediaLabel">MUTE MEDIA</span>
     </button>
   </div>
 
@@ -781,14 +781,31 @@ function classifySource(freqData, timeData, sampleRate){
   const humanRaw = humanScore / total;
   const mediaRaw  = mediaScore  / total;
 
-  // Temporal smoothing — prevents flicker
-  clsSmooth.human = clsSmooth.human * 0.82 + humanRaw * 0.18;
-  clsSmooth.media  = clsSmooth.media  * 0.82 + mediaRaw  * 0.18;
+  // Temporal smoothing — slow to switch to MEDIA, fast to switch to HUMAN
+  // Asymmetric alpha: human detects quickly, media needs sustained evidence
+  const alphaToHuman = 0.25;  // fast: voice appears → detect quickly
+  const alphaToMedia = 0.08;  // slow: need sustained media signal to flip
 
+  if(humanRaw > clsSmooth.human){
+    clsSmooth.human = clsSmooth.human * (1-alphaToHuman) + humanRaw * alphaToHuman;
+  } else {
+    clsSmooth.human = clsSmooth.human * (1-alphaToMedia) + humanRaw * alphaToMedia;
+  }
+  clsSmooth.media = 1 - clsSmooth.human;
+
+  // Grace period: first 8 seconds always HUMAN (features need warmup)
   const confidence = Math.abs(clsSmooth.human - clsSmooth.media);
   let verdict = 'MIXED';
-  if(confidence > 0.12){
-    verdict = clsSmooth.human > clsSmooth.media ? 'HUMAN' : 'MEDIA';
+  if(frameCount < 480){
+    // Warmup — default human, only flip if extremely strong media signal
+    verdict = clsSmooth.media > 0.80 ? 'MEDIA' : 'HUMAN';
+  } else if(confidence > 0.15){
+    // Require MEDIA to be >70% confident before labeling as media
+    if(clsSmooth.media > clsSmooth.human && clsSmooth.media > 0.65){
+      verdict = 'MEDIA';
+    } else if(clsSmooth.human > clsSmooth.media){
+      verdict = 'HUMAN';
+    }
   }
 
   return {
@@ -1152,10 +1169,10 @@ function applyMuteBtnState(src, muted){
   const label = document.getElementById('mute' + (src==='human'?'Human':'Media') + 'Label');
   if(muted){
     btn.className   = 'mute-btn muted-' + src;
-    label.textContent = src==='human' ? '✕ HUMAN MUTED' : '✕ MEDIA MUTED';
+    label.textContent = src==='human' ? '✕ MUTING HUMAN' : '✕ MUTING MEDIA';
   } else {
     btn.className   = 'mute-btn';
-    label.textContent = src==='human' ? 'HUMAN VOICE' : 'MEDIA / TV';
+    label.textContent = src==='human' ? 'MUTE HUMAN' : 'MUTE MEDIA';
   }
 }
 
@@ -1165,20 +1182,23 @@ function resetMuteBtns(){
 }
 
 // Called every tick with current classifier verdict ('HUMAN'|'MEDIA'|'MIXED'|null)
-// null = use last known verdict
+// sourceMode OVERRIDES classifier — if user locked a mode, trust that
 let _lastVerdict = 'MIXED';
 function applyMuteGain(verdict){
   if(verdict) _lastVerdict = verdict;
   if(!muteGain) return;
 
-  const v = _lastVerdict;
-  let targetGain = 1.0;
+  // Resolve effective source: manual lock wins over classifier
+  let effectiveSource;
+  if(sourceMode === 'human')      effectiveSource = 'HUMAN';
+  else if(sourceMode === 'media') effectiveSource = 'MEDIA';
+  else                            effectiveSource = _lastVerdict; // AUTO
 
-  if(muteHuman && v === 'HUMAN') targetGain = 0.0;
-  else if(muteMedia && v === 'MEDIA') targetGain = 0.0;
+  let targetGain = 1.0;
+  if(muteHuman && effectiveSource === 'HUMAN') targetGain = 0.0;
+  else if(muteMedia && effectiveSource === 'MEDIA') targetGain = 0.0;
   else targetGain = 1.0;
 
-  // Smooth transition — 20ms ramp prevents clicks
   muteGain.gain.cancelScheduledValues(muteGain.context.currentTime);
   muteGain.gain.setTargetAtTime(targetGain, muteGain.context.currentTime, 0.02);
 }
@@ -1253,6 +1273,7 @@ function setSourceMode(mode){
     // Restore params from sliders
     applyParamsToGraph();
   }
+  applyMuteGain(null); // re-evaluate gate with new sourceMode
 }
 
 
