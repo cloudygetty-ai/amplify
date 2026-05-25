@@ -7,14 +7,15 @@
 <title>AMPLIFY — Voice Isolation</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
-<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@300;400;500;600;700&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Outfit:wght@300;400;500;600&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet"/>
 <style>
 :root{
-  --green:#00ff9d;--green-dim:rgba(0,255,157,.12);--green-glow:rgba(0,255,157,.4);
-  --amber:#f59e0b;--red:#ef4444;--purple:#a78bfa;--pink:#ff3cac;
-  --bg:#040404;--bg1:#080808;--bg2:#0c0c0c;--bg3:#111;
-  --border:#161616;--border2:#1e1e1e;
-  --text:#d0d0d0;--text-dim:#3a3a3a;--text-mute:#1e1e1e;
+  /* ── MIDNIGHT GALAXY THEME ── */
+  --green:#c084fc;--green-dim:rgba(192,132,252,.1);--green-glow:rgba(192,132,252,.45);
+  --amber:#818cf8;--red:#f472b6;--purple:#a490c2;--pink:#e879f9;
+  --bg:#0d0a14;--bg1:#110d1c;--bg2:#160f24;--bg3:#1c1430;
+  --border:#2a1e40;--border2:#3d2a5c;
+  --text:#e6e6fa;--text-dim:#7c6d9e;--text-mute:#3d2a5c;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 
@@ -31,7 +32,7 @@ body::after{
 }
 
 body{
-  background:var(--bg);
+  background:radial-gradient(ellipse 120% 80% at 50% -10%, #1e1040 0%, #0d0a14 55%, #07050f 100%);
   font-family:'Share Tech Mono',monospace;
   color:var(--text);min-height:100vh;
   display:flex;flex-direction:column;align-items:center;
@@ -43,14 +44,37 @@ body{
 .grid{
   position:fixed;inset:0;pointer-events:none;z-index:0;
   background-image:
-    linear-gradient(rgba(0,255,157,.018) 1px,transparent 1px),
-    linear-gradient(90deg,rgba(0,255,157,.018) 1px,transparent 1px);
+    linear-gradient(rgba(192,132,252,.022) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(130,100,220,.018) 1px,transparent 1px);
   background-size:40px 40px;
 }
 /* Radial fade on grid */
 .grid::after{
   content:'';position:absolute;inset:0;
   background:radial-gradient(ellipse 70% 70% at 50% 40%,transparent 40%,var(--bg) 100%);
+}
+/* Star field */
+.grid::before{
+  content:'';position:absolute;inset:0;
+  background-image:
+    radial-gradient(1px 1px at 10% 15%, rgba(230,230,250,.6) 0%, transparent 100%),
+    radial-gradient(1px 1px at 25% 35%, rgba(192,132,252,.5) 0%, transparent 100%),
+    radial-gradient(1.5px 1.5px at 40% 8%, rgba(230,230,250,.7) 0%, transparent 100%),
+    radial-gradient(1px 1px at 55% 22%, rgba(129,140,248,.6) 0%, transparent 100%),
+    radial-gradient(1px 1px at 70% 12%, rgba(230,230,250,.5) 0%, transparent 100%),
+    radial-gradient(1.5px 1.5px at 85% 30%, rgba(192,132,252,.6) 0%, transparent 100%),
+    radial-gradient(1px 1px at 15% 55%, rgba(230,230,250,.4) 0%, transparent 100%),
+    radial-gradient(1px 1px at 60% 48%, rgba(129,140,248,.5) 0%, transparent 100%),
+    radial-gradient(1.5px 1.5px at 90% 62%, rgba(230,230,250,.6) 0%, transparent 100%),
+    radial-gradient(1px 1px at 30% 75%, rgba(192,132,252,.4) 0%, transparent 100%),
+    radial-gradient(1px 1px at 75% 80%, rgba(230,230,250,.5) 0%, transparent 100%),
+    radial-gradient(1px 1px at 5% 90%, rgba(129,140,248,.4) 0%, transparent 100%),
+    radial-gradient(1px 1px at 45% 92%, rgba(230,230,250,.3) 0%, transparent 100%),
+    radial-gradient(1.5px 1.5px at 95% 5%, rgba(192,132,252,.7) 0%, transparent 100%);
+  animation: twinkle 8s ease-in-out infinite alternate;
+}
+@keyframes twinkle{
+  0%{opacity:.6} 50%{opacity:1} 100%{opacity:.7}
 }
 
 /* ══════════════════════════════════════════════
@@ -60,7 +84,7 @@ body{
   position:fixed;top:0;left:0;right:0;z-index:9999;
   display:flex;align-items:center;justify-content:space-between;
   padding:0 16px;height:48px;
-  background:rgba(4,4,4,.97);
+  background:rgba(13,10,20,.97);
   border-bottom:1px solid var(--border);
   pointer-events:auto;
 }
@@ -70,7 +94,7 @@ body{
 .tb-logo{
   font-family:'Orbitron',monospace;font-size:14px;
   font-weight:900;letter-spacing:.12em;color:var(--green);
-  text-shadow:0 0 20px var(--green-glow);
+  text-shadow:0 0 20px rgba(192,132,252,.6),0 0 40px rgba(129,140,248,.3);
 }
 .tb-ver{font-size:9px;letter-spacing:.25em;color:var(--text-dim)}
 .tb-right{display:flex;align-items:center;gap:6px}
@@ -112,17 +136,17 @@ body{
   text-align:center;margin-bottom:22px;position:relative;z-index:1;
 }
 .tagline{
-  font-size:9px;letter-spacing:.5em;color:var(--green);opacity:.4;
+  font-size:9px;letter-spacing:.5em;color:#a490c2;opacity:.5;
   margin-bottom:10px;font-family:'Share Tech Mono',monospace;
 }
 h1{
   font-family:'Orbitron',monospace;font-weight:900;
   font-size:42px;letter-spacing:.06em;
   color:#fff;
-  text-shadow:0 0 40px rgba(0,255,157,.25),0 0 80px rgba(0,255,157,.1);
+  text-shadow:0 0 40px rgba(192,132,252,.4),0 0 80px rgba(129,140,248,.2),0 0 120px rgba(192,132,252,.08);
   margin-bottom:2px;line-height:1;
 }
-h1 span{color:var(--green)}
+h1 span{color:#818cf8}
 .sub{
   font-size:9px;letter-spacing:.35em;color:var(--text-dim);
   font-family:'Share Tech Mono',monospace;
@@ -140,7 +164,7 @@ h1 span{color:var(--green)}
 /* Corner accents */
 .panel::before,.panel::after{
   content:'';position:absolute;width:12px;height:12px;
-  border-color:var(--green);border-style:solid;opacity:.4;
+  border-color:#7c3aed;border-style:solid;opacity:.5;
 }
 .panel::before{top:-1px;left:-1px;border-width:1px 0 0 1px}
 .panel::after{bottom:-1px;right:-1px;border-width:0 1px 1px 0}
@@ -159,10 +183,10 @@ h1 span{color:var(--green)}
   position:absolute;inset:0;border-radius:50%;
   background:var(--text-mute);transition:background .2s;
 }
-.pulse-ring.active .ring{background:var(--green);box-shadow:0 0 8px var(--green)}
+.pulse-ring.active .ring{background:#c084fc;box-shadow:0 0 10px rgba(192,132,252,.8)}
 .pulse-ring.active::before{
   content:'';position:absolute;inset:-3px;border-radius:50%;
-  border:1px solid var(--green);opacity:.4;
+  border:1px solid #a855f7;opacity:.5;
   animation:ring-pulse 1.5s ease-out infinite;
 }
 .pulse-ring.scanning .ring{background:var(--amber);box-shadow:0 0 8px var(--amber)}
@@ -171,7 +195,7 @@ h1 span{color:var(--green)}
 }
 .status-label{
   font-size:11px;letter-spacing:.25em;color:var(--text-dim);
-  font-family:'Rajdhani',sans-serif;font-weight:600;
+  font-family:'Outfit',sans-serif;font-weight:600;
 }
 .status-label.on{color:#fff}
 .nf-display{font-size:10px;color:var(--text-mute);letter-spacing:.12em}
@@ -239,7 +263,7 @@ h1 span{color:var(--green)}
 .cls-verdict{
   margin-top:12px;padding:8px 12px;font-size:10px;letter-spacing:.25em;
   border:1px solid var(--border);text-align:center;color:var(--text-dim);
-  transition:all .25s;font-family:'Rajdhani',sans-serif;font-weight:600;
+  transition:all .25s;font-family:'Outfit',sans-serif;font-weight:600;
 }
 .cls-verdict.v-human{
   border-color:var(--green);color:var(--green);
@@ -338,7 +362,7 @@ h1 span{color:var(--green)}
 }
 .preset-btn:hover{border-color:var(--border2);color:var(--text-dim)}
 .preset-btn.active{
-  border-color:var(--green);background:var(--green-dim);color:var(--green);
+  border-color:#a855f7;background:rgba(168,85,247,.1);color:#c084fc;
 }
 
 /* ── CONTROLS ── */
@@ -348,7 +372,7 @@ h1 span{color:var(--green)}
 .ctrl-name{font-size:8px;letter-spacing:.22em;color:var(--text-dim)}
 .ctrl-val{
   font-size:10px;color:var(--green);letter-spacing:.1em;
-  font-family:'Rajdhani',sans-serif;font-weight:600;
+  font-family:'Outfit',sans-serif;font-weight:600;
 }
 input[type=range]{
   width:100%;height:2px;appearance:none;-webkit-appearance:none;
@@ -379,8 +403,8 @@ input[type=range]::-moz-range-thumb{
 }
 .engage-btn:hover::before{transform:translateX(100%)}
 .engage-btn.off{
-  border:1px solid var(--green);background:var(--green-dim);color:var(--green);
-  box-shadow:0 0 24px rgba(0,255,157,.1),inset 0 0 24px rgba(0,255,157,.03);
+  border:1px solid #a855f7;background:rgba(168,85,247,.08);color:#c084fc;
+  box-shadow:0 0 30px rgba(168,85,247,.15),inset 0 0 30px rgba(168,85,247,.04);
 }
 .engage-btn.on{
   border:1px solid var(--red);background:rgba(239,68,68,.07);color:var(--red);
@@ -395,7 +419,7 @@ input[type=range]::-moz-range-thumb{
 }
 .ultra-badge{
   display:none;margin:8px 18px;padding:8px 14px;
-  border:1px solid var(--pink);background:rgba(255,60,172,.06);
+  border:1px solid #e879f9;background:rgba(232,121,249,.06);
   font-size:9px;letter-spacing:.2em;color:var(--pink);text-align:center;
 }
 .ultra-badge.on{display:block}
@@ -429,12 +453,12 @@ input[type=range]::-moz-range-thumb{
   font-size:13px;letter-spacing:.04em;line-height:1.8;
   color:#888;margin-bottom:4px;min-height:22px;
   border-left:2px solid rgba(0,255,157,.3);padding-left:10px;
-  font-style:italic;font-family:'Rajdhani',sans-serif;font-weight:400;
+  font-style:italic;font-family:'Outfit',sans-serif;font-weight:400;
 }
 .cc-live.active{color:var(--text);border-left-color:var(--green)}
 .cc-history{
   font-size:13px;letter-spacing:.02em;line-height:1.9;
-  color:#444;padding-left:12px;font-family:'Rajdhani',sans-serif;
+  color:#444;padding-left:12px;font-family:'Outfit',sans-serif;
 }
 .cc-history span{display:block;padding:1px 0;border-bottom:1px solid #0a0a0a}
 .cc-history span:last-child{color:#777}
@@ -498,7 +522,7 @@ body.overlay-mode .controls{display:none}
 
 <!-- ══ HEADER ══ -->
 <div class="header">
-  <div class="tagline">SENTINEL AUDIO SYSTEM // HUMAN VOICE ISOLATION</div>
+  <div class="tagline">SENTINEL AUDIO SYSTEM // MIDNIGHT GALAXY // v3.1</div>
   <h1>AMPL<span>I</span>FY</h1>
   <div class="sub">LOW-VOICE ISOLATION ENGINE // v3.1</div>
 </div>
@@ -1657,9 +1681,9 @@ function drawScope(){
 
   scopeCtx.clearRect(0,0,W,H);
   scopeCtx.beginPath();
-  scopeCtx.strokeStyle = 'rgba(0,255,157,0.7)';
+  scopeCtx.strokeStyle = 'rgba(192,132,252,0.75)';
   scopeCtx.lineWidth = 1.5;
-  scopeCtx.shadowColor = '#00ff9d';
+  scopeCtx.shadowColor = '#a855f7';
   scopeCtx.shadowBlur = 6;
 
   const sliceW = W / buf.length;
