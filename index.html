@@ -698,6 +698,15 @@ body.overlay-mode .presets{display:none}
 body.overlay-mode .controls{display:none}
 body.overlay-mode .panel{background:rgba(14,10,30,.25)!important;backdrop-filter:blur(28px) saturate(2)}
 </style>
+  <!-- PWA META -->
+  <meta name="theme-color" content="#a855f7"/>
+  <meta name="mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <meta name="apple-mobile-web-app-title" content="AMPLIFY"/>
+  <link rel="manifest" href="/manifest.json"/>
+  <link rel="apple-touch-icon" href="/icon-192.png"/>
+  <link rel="icon" type="image/svg+xml" href="/icon.svg"/>
+  <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png"/>
 </head>
 <body>
 <div class="stars"></div>
@@ -2291,6 +2300,19 @@ function tickEnhanced(){
 }
 
 
+</script>
+
+<script>
+// ── SERVICE WORKER — PWA offline support ──
+if('serviceWorker' in navigator){
+  window.addEventListener('load', ()=>{
+    navigator.serviceWorker.register('/sw.js').then(reg=>{
+      console.log('SW registered:', reg.scope);
+    }).catch(err=>{
+      console.log('SW registration failed:', err);
+    });
+  });
+}
 </script>
 </body>
 </html>
