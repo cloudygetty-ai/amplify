@@ -1239,24 +1239,24 @@ function updateClassifierUI(cls){
   if(cls.verdict==='HUMAN'){
     v.textContent='▸ HUMAN VOICE DETECTED';
     v.className='cls-verdict v-human';
-    badge.textContent='◈ HUMAN VOICE';
     badge.className='human';
+    const _bh=document.getElementById('srcBadgeText');if(_bh)_bh.textContent='HUMAN VOICE';
     document.getElementById('dot').className='dot active-voice';
     document.getElementById('voiceLock').textContent='▸ VOICE LOCKED';
     document.getElementById('voiceLock').className='voice-lock locked';
   } else if(cls.verdict==='MEDIA'){
     v.textContent='▸ MEDIA / BROADCAST DETECTED';
     v.className='cls-verdict v-media';
-    badge.textContent='◈ MEDIA / BROADCAST';
     badge.className='media';
+    const _bm=document.getElementById('srcBadgeText');if(_bm)_bm.textContent='MEDIA / TV';
     document.getElementById('dot').className='dot active-scan';
     document.getElementById('voiceLock').textContent='▸ MEDIA SIGNAL';
     document.getElementById('voiceLock').className='voice-lock';
   } else {
     v.textContent='▸ MIXED / AMBIGUOUS SOURCE';
     v.className='cls-verdict v-mixed';
-    badge.textContent='◈ MIXED SOURCE';
     badge.className='silence';
+    const _bx=document.getElementById('srcBadgeText');if(_bx)_bx.textContent='MIXED';
     document.getElementById('dot').className='dot active-scan';
   }
 }
@@ -1264,7 +1264,7 @@ function updateClassifierUI(cls){
 // ═══════════════════════════════════════════════════════════════
 // VU HELPERS
 // ═══════════════════════════════════════════════════════════════
-function vuColor(l){ return l>.8?'#ef4444':l>.5?'#f59e0b':'#00ff9d'; }
+function vuColor(l){ return l>.8?'#f472b6':l>.5?'#fbbf24':'#c084fc'; }
 
 // ═══════════════════════════════════════════════════════════════
 // TICK — main render loop
@@ -1315,10 +1315,12 @@ function tick(){
     const v = inData[Math.min(i*step, inData.length-1)]||0;
     const pct = (v/255)*100;
     b.style.height = pct+'%';
-    b.style.background = `rgba(0,255,157,${.08+(v/255)*.85})`;
-    b.style.borderTop = v>30 ? '1px solid rgba(0,255,157,.35)':'none';
+    b.style.background = `linear-gradient(to top,rgba(168,85,247,${.15+(v/255)*.8}),rgba(192,132,252,${.05+(v/255)*.4}))`;
+    b.style.boxShadow = v>80?`0 0 4px rgba(192,132,252,${(v/255)*.5})`:'none';
   });
-
+  drawScope();
+  const _ce=document.getElementById('clsFrameCount');
+  if(_ce){if(frameCount<480){_ce.textContent='WARMUP '+Math.round((frameCount/480)*100)+'%';_ce.style.color='#fbbf24';}else{_ce.textContent='LIVE';_ce.style.color='#c084fc';}}
   raf = requestAnimationFrame(tick);
 }
 
@@ -1472,11 +1474,11 @@ async function toggleEngage(){
     setStatus('ACTIVE', true);
     updateChainDisplay();
 
-    ['engageBtn','engageBtnTop'].forEach(id=>{
-      const btn=document.getElementById(id);
-      if(btn){ btn.textContent=id==='engageBtnTop'?'■ STOP':'DISENGAGE'; btn.className='engage-btn on'; }
-    });
-    document.getElementById('engageBtnTop').className='tb-btn active-red';
+    const _eb=document.getElementById('engageBtn');
+    if(_eb){_eb.textContent='DISENGAGE';_eb.className='engage-btn on';}
+    const _et=document.getElementById('engageBtnTop');
+    if(_et){_et.textContent='■ STOP';_et.className='tb-btn active-red';}
+    updatePulseRing('active');
 
   } catch(e){
     setError(e.message||'Microphone access denied');
@@ -1510,11 +1512,12 @@ function stopAll(){
     const el=document.getElementById(id); if(el) el.className='chain-node';
   });
 
-  ['engageBtn','engageBtnTop'].forEach(id=>{
-    const btn=document.getElementById(id);
-    if(btn){ btn.textContent=id==='engageBtnTop'?'▶ ENGAGE':'ENGAGE'; btn.className='engage-btn off'; }
-  });
-  document.getElementById('engageBtnTop').className='tb-btn';
+  const _sb=document.getElementById('engageBtn');
+  if(_sb){_sb.textContent='ENGAGE';_sb.className='engage-btn off';}
+  const _st=document.getElementById('engageBtnTop');
+  if(_st){_st.textContent='▶ ENGAGE';_st.className='tb-btn';}
+  updatePulseRing('');
+  if(typeof scopeCtx!=='undefined'&&scopeCtx&&scopeCanvas)scopeCtx.clearRect(0,0,scopeCanvas.width,scopeCanvas.height);
 }
 
 function setStatus(s, on){
@@ -1861,204 +1864,7 @@ function tickEnhanced(){
   }
 }
 
-// Patch requestAnimationFrame tick to also run enhanced
-const _origRAF = requestAnimationFrame;
-let _rafRunning = false;
 
-// Override tick to add scope
-const tickOrig = window.tick;
-window.tick = function(){
-  tickOrig && tickOrig();
-  tickEnhanced();
-}
-
-// ── Fix srcBadge to use new inner span ──
-const _origUpdateCls = window.updateClassifierUI;
-window.updateClassifierUI = function(cls){
-  _origUpdateCls && _origUpdateCls(cls);
-  // Sync badge inner text span
-  const t = document.getElementById('srcBadgeText');
-  const b = document.getElementById('srcBadge');
-  if(t && b){
-    t.textContent = b.className === 'human' ? 'HUMAN VOICE'
-      : b.className === 'media' ? 'MEDIA / BROADCAST'
-      : 'AWAITING SIGNAL';
-  }
-}
-
-// ── Fix pulse ring to replace old dot ──
-function updatePulseRing(state){
-  const r = document.getElementById('pulseRing');
-  if(!r) return;
-  if(state==='active') r.className='pulse-ring active';
-  else if(state==='scanning') r.className='pulse-ring scanning';
-  else r.className='pulse-ring';
-}
-
-const _origSetStatus = window.setStatus;
-window.setStatus = function(s,on){
-  _origSetStatus && _origSetStatus(s,on);
-  updatePulseRing(on ? 'active' : s==='CONNECTING…' ? 'scanning' : '');
-}
-
-const _origStopAll = window.stopAll;
-window.stopAll = function(){
-  _origStopAll && _origStopAll();
-  updatePulseRing('');
-  // Clear scope
-  if(scopeCtx && scopeCanvas){
-    scopeCtx.clearRect(0,0,scopeCanvas.width,scopeCanvas.height);
-  }
-}
-
-// ── ENHANCED SCOPE ──
-const scopeCanvas = document.getElementById('scopeCanvas');
-const scopeCtx = scopeCanvas ? scopeCanvas.getContext('2d') : null;
-
-function drawScope(){
-  if(!scopeCtx || !timeAn) return;
-  const W = scopeCanvas.offsetWidth || 600;
-  const H = scopeCanvas.offsetHeight || 60;
-  if(scopeCanvas.width !== W) scopeCanvas.width = W;
-  if(scopeCanvas.height !== H) scopeCanvas.height = H;
-
-  const buf = new Uint8Array(timeAn.fftSize);
-  timeAn.getByteTimeDomainData(buf);
-
-  scopeCtx.clearRect(0,0,W,H);
-
-  // Background gradient
-  const bg = scopeCtx.createLinearGradient(0,0,0,H);
-  bg.addColorStop(0,'rgba(43,30,90,.0)');
-  bg.addColorStop(1,'rgba(0,0,0,.0)');
-  scopeCtx.fillStyle = bg;
-  scopeCtx.fillRect(0,0,W,H);
-
-  // Glow trace (wide, dim)
-  scopeCtx.beginPath();
-  scopeCtx.strokeStyle = 'rgba(192,132,252,0.15)';
-  scopeCtx.lineWidth = 6;
-  scopeCtx.shadowColor = '#a855f7';
-  scopeCtx.shadowBlur = 18;
-  const slice = W / buf.length;
-  let x = 0;
-  for(let i=0;i<buf.length;i++){
-    const y = (buf[i]/128)*H/2;
-    i===0 ? scopeCtx.moveTo(x,y) : scopeCtx.lineTo(x,y);
-    x += slice;
-  }
-  scopeCtx.stroke();
-
-  // Sharp trace (thin, bright)
-  scopeCtx.beginPath();
-  scopeCtx.strokeStyle = 'rgba(212,184,255,0.85)';
-  scopeCtx.lineWidth = 1.5;
-  scopeCtx.shadowBlur = 6;
-  x = 0;
-  for(let i=0;i<buf.length;i++){
-    const y = (buf[i]/128)*H/2;
-    i===0 ? scopeCtx.moveTo(x,y) : scopeCtx.lineTo(x,y);
-    x += slice;
-  }
-  scopeCtx.stroke();
-  scopeCtx.shadowBlur = 0;
-}
-
-// ── ENHANCED VU COLORS ──
-const _origVuColor = window.vuColor;
-window.vuColor = function(l){
-  return l>.8 ? '#f472b6' : l>.5 ? '#fbbf24' : '#c084fc';
-}
-
-// ── ENHANCED SPECTRUM BARS ──
-const _origTick2 = window.tick;
-window.tick = function(){
-  _origTick2 && _origTick2();
-  drawScope();
-  // Update warmup
-  const el = document.getElementById('clsFrameCount');
-  if(el){
-    if(frameCount < 480){
-      const p = Math.round((frameCount/480)*100);
-      el.textContent = `WARMUP ${p}%`;
-      el.style.color = '#fbbf24';
-    } else {
-      el.textContent = 'LIVE';
-      el.style.color = '#c084fc';
-    }
-  }
-  // Render spectrum with galaxy colors
-  if(window._inAn_data){
-    const d = window._inAn_data;
-    const barEls = document.querySelectorAll('.bar');
-    barEls.forEach((b,i)=>{
-      const v = d[Math.min(i*Math.max(1,Math.floor(d.length/32)), d.length-1)] || 0;
-      const pct = (v/255)*100;
-      b.style.height = pct+'%';
-      const g = `linear-gradient(to top, rgba(168,85,247,${.15+(v/255)*.8}), rgba(192,132,252,${.05+(v/255)*.4}))`;
-      b.style.background = g;
-      b.style.boxShadow = v > 80 ? `0 0 4px rgba(192,132,252,${(v/255)*.6})` : 'none';
-    });
-  }
-};
-
-// Patch tick to capture bar data
-const _origTickInner = window.tick;
-const _captureAnalyserData = function(){
-  if(!window.inAn) return;
-  const d = new Uint8Array(window.inAn.frequencyBinCount);
-  window.inAn.getByteFrequencyData(d);
-  window._inAn_data = d;
-};
-// Run after each frame
-const _rafOrig = window.requestAnimationFrame;
-
-// ── PULSE RING ──
-function updatePulseRing(state){
-  const r = document.getElementById('pulseRing');
-  if(!r) return;
-  r.className = 'pulse-ring' + (state==='active' ? ' active' : state==='scanning' ? ' scanning' : '');
-}
-const _origSetStatus2 = window.setStatus;
-window.setStatus = function(s,on){
-  _origSetStatus2 && _origSetStatus2(s,on);
-  updatePulseRing(on ? 'active' : s==='CONNECTING…' ? 'scanning' : '');
-};
-
-// ── BADGE FIX ──
-const _origUpdateCls2 = window.updateClassifierUI;
-window.updateClassifierUI = function(cls){
-  _origUpdateCls2 && _origUpdateCls2(cls);
-  const t = document.getElementById('srcBadgeText');
-  const b = document.getElementById('srcBadge');
-  if(t && b){
-    t.textContent = b.className.includes('human') ? 'HUMAN VOICE'
-      : b.className.includes('media') ? 'MEDIA / TV' : 'AWAITING';
-  }
-};
-
-// ── STOP ALL ──
-const _origStopAll2 = window.stopAll;
-window.stopAll = function(){
-  _origStopAll2 && _origStopAll2();
-  updatePulseRing('');
-  if(scopeCtx && scopeCanvas) scopeCtx.clearRect(0,0,scopeCanvas.width,scopeCanvas.height);
-  window._inAn_data = null;
-  document.getElementById('engageBtnTop').textContent = '▶ ENGAGE';
-  document.getElementById('engageBtnTop').className = 'tb-btn';
-};
-
-// ── ENGAGE BTN TOP SYNC ──
-const _origToggleEngage = window.toggleEngage;
-window.toggleEngage = async function(){
-  await _origToggleEngage();
-  const btn = document.getElementById('engageBtnTop');
-  if(window.active){
-    btn.textContent = '■ STOP';
-    btn.className = 'tb-btn active-red';
-    updatePulseRing('active');
-  }
-};
 </script>
 </body>
 </html>
