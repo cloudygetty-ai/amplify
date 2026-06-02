@@ -804,6 +804,74 @@ body.overlay-mode .panel{background:rgba(14,10,30,.25)!important;backdrop-filter
     </button>
   </div>
 
+  <!-- NOISE SUPPRESSION -->
+  <div class="ns-panel">
+    <div class="ns-header">
+      FAN / AC / BLOWER ELIMINATION
+      <span class="ns-badge" id="nsBadge">NOISE: IDLE</span>
+    </div>
+
+    <!-- Detected sources -->
+    <div class="ns-targets">
+      <div class="ns-target" id="tgtFan"><span class="tgt-dot"></span>FAN</div>
+      <div class="ns-target" id="tgtAC"><span class="tgt-dot"></span>A/C</div>
+      <div class="ns-target" id="tgtBlower"><span class="tgt-dot"></span>BLOWER</div>
+      <div class="ns-target" id="tgtHVAC"><span class="tgt-dot"></span>HVAC</div>
+    </div>
+
+    <!-- Controls -->
+    <div class="ns-controls">
+      <button class="ns-btn" id="nsBtn" onclick="toggleNoiseSuppression()">◎ SUPPRESS</button>
+      <button class="ns-cal-btn" id="nsCalBtn" onclick="startNoiseCalibration()">⊕ CALIBRATE</button>
+      <button class="ns-reset-btn" onclick="resetNoiseProfile()">↺</button>
+    </div>
+
+    <!-- Aggressiveness slider -->
+    <div class="ns-slider-row">
+      <span class="ns-slider-label">STRENGTH</span>
+      <input type="range" id="nsAlpha" min="1.0" max="4.0" step="0.1" value="2.0"
+        oninput="setNoiseAlpha(this.value);updatePct(this)"
+        style="flex:1"/>
+      <span class="ns-slider-val" id="nsAlphaVal">2.0×</span>
+    </div>
+    <div class="ns-slider-row">
+      <span class="ns-slider-label">FLOOR</span>
+      <input type="range" id="nsFloor" min="0.001" max="0.05" step="0.001" value="0.001"
+        oninput="noiseFloor=parseFloat(this.value);document.getElementById('nsFloorVal').textContent=parseFloat(this.value).toFixed(3);updatePct(this)"
+        style="flex:1"/>
+      <span class="ns-slider-val" id="nsFloorVal">0.001</span>
+    </div>
+
+    <div class="ns-instructions">
+      <b>1.</b> ENGAGE mic &nbsp;→&nbsp; <b>2.</b> Run only fan/AC &nbsp;→&nbsp; <b>3.</b> Hit CALIBRATE (0.7s) &nbsp;→&nbsp; <b>4.</b> Speak — noise eliminated
+    </div>
+  </div>
+
+  <!-- NOISE SUPPRESSION PANEL -->
+  <div class="noise-panel">
+    <div class="noise-header">
+      <span class="noise-title">FAN / AC / BLOWER SUPPRESSION</span>
+      <span class="noise-status off" id="noiseStatus">OFF</span>
+    </div>
+    <div class="fan-badge" id="fanBadge">
+      <span class="fan-icon">🌀</span>
+      <span class="fan-label" id="fanLabel">NO FAN DETECTED</span>
+      <div class="fan-score-bar"><div class="fan-score-fill" id="fanScoreFill"></div></div>
+    </div>
+    <div class="noise-controls">
+      <button class="noise-btn" id="nsBtnToggle" onclick="nsToggle()">◈ ENABLE</button>
+      <button class="noise-btn calibrate-btn" id="nsBtnCal" onclick="nsCalibrate()" style="display:none">⟳ CALIBRATE</button>
+      <button class="noise-btn" id="nsBtnAuto" onclick="nsAutoCalibrate()">⚡ AUTO-CAL</button>
+    </div>
+    <div class="noise-strength">
+      <span class="noise-strength-label">STRENGTH</span>
+      <input type="range" id="nsStrength" min="1" max="4" step="0.1" value="2"
+        style="flex:1" oninput="nsSetStrength(this.value)"/>
+      <span class="noise-strength-val" id="nsStrengthVal">2.0×</span>
+    </div>
+    <div class="suppress-meter"><div class="suppress-fill" id="suppressFill"></div></div>
+  </div>
+
   <div class="chain" id="chainDisplay">
     <div class="chain-node" id="cn0">PRE-EMPH</div><div class="chain-arrow">→</div>
     <div class="chain-node" id="cn1">HP 80Hz</div><div class="chain-arrow">→</div>
@@ -877,6 +945,14 @@ const SLIDERS = [
 // ═══════════════════════════════════════════════════════════════
 let active=false, overlayMode=false, ultraMode=false;
 let sourceMode='auto'; // 'auto' | 'human' | 'media'
+// ── Fan/AC noise suppression ──
+let noiseNode=null;          // ScriptProcessorNode
+let noiseProfile=null;       // Float32Array — learned noise spectrum
+let noiseCalibrating=false;  // capturing noise floor
+let noiseCalibFrames=[];     // accumulate calibration frames
+let noiseSuppressOn=false;   // active suppression toggle
+let noiseAlpha=2.0;          // over-subtraction factor (1.5–3.0)
+let noiseFloor=0.001;        // spectral floor (prevents musical noise)
 let muteHuman=false, muteMedia=false;
 let muteGain=null; // dedicated gain node driven by classifier
 let ctx=null, stream=null;
@@ -1321,6 +1397,27 @@ function tick(){
   drawScope();
   const _ce=document.getElementById('clsFrameCount');
   if(_ce){if(frameCount<480){_ce.textContent='WARMUP '+Math.round((frameCount/480)*100)+'%';_ce.style.color='#fbbf24';}else{_ce.textContent='LIVE';_ce.style.color='#c084fc';}}
+  // Fan score display
+  if(typeof nsFanScore !== 'undefined'){
+    const fb = document.getElementById('fanBadge');
+    const fl = document.getElementById('fanLabel');
+    const fs = document.getElementById('fanScoreFill');
+    const sf = document.getElementById('suppressFill');
+    if(fb&&fl&&fs){
+      const pct = Math.round(nsFanScore*100);
+      fs.style.width = pct+'%';
+      if(nsFanScore > 0.45){
+        fb.className = 'fan-badge detected';
+        fl.textContent = nsFanScore > 0.7 ? '⚠ FAN / AC DETECTED' : 'POSSIBLE FAN NOISE';
+      } else {
+        fb.className = 'fan-badge';
+        fl.textContent = nsFanScore > 0.25 ? 'LOW BACKGROUND NOISE' : 'NO FAN DETECTED';
+      }
+    }
+    if(sf && noiseSuppressOn && typeof nsOutSmooth !== 'undefined'){
+      sf.style.width = Math.round((1-nsOutSmooth)*100)+'%';
+    }
+  }
   raf = requestAnimationFrame(tick);
 }
 
@@ -1450,13 +1547,144 @@ async function toggleEngage(){
     limiter.attack.value = 0.001;
     limiter.release.value = 0.1;
 
+    // ── NOISE SUPPRESSION NODE (spectral subtraction) ──
+    // bufferSize 1024 = ~23ms at 44100Hz — good latency/accuracy tradeoff
+    // ── NOISE SUPPRESSION ENGINE v2 — fast band-gain approach ──
+    // Uses AnalyserNode for FFT (C++ side, zero JS cost)
+    // ScriptProcessor applies per-sample smoothed gain only (O(N), no inner loops)
+
+    const NS_BANDS = 32;          // sub-bands for profile learning
+    const NS_BUF   = 512;         // ScriptProcessor buffer — smaller = lower latency
+    const NS_CAL_FRAMES = 50;     // ~580ms calibration window
+
+    // Noise analyser — separate from inAn, reads raw pre-EQ signal
+    noiseNode = ctx.createScriptProcessor(NS_BUF, 1, 1);
+
+    // Noise profile: learned per-band energy floor
+    let nsProfile    = new Float32Array(NS_BANDS);  // learned noise per band
+    let nsCalFrames  = [];                           // calibration accumulator
+    let nsGainSmooth = new Float32Array(NS_BANDS).fill(1.0); // smoothed gains
+    let nsOutGain    = 1.0;   // current frame output gain scalar
+    let nsOutSmooth  = 1.0;   // smoothed output gain (prevent clicks)
+
+    // Fan detection state
+    let nsFlatHistory  = [];  // spectral flatness history
+    let nsSilHistory   = [];  // silence detection history
+    let nsCrestHistory = [];  // crest factor history
+    let nsFanScore     = 0;   // 0–1, smoothed
+
+    noiseNode.onaudioprocess = function(e){
+      const inBuf  = e.inputBuffer.getChannelData(0);
+      const outBuf = e.outputBuffer.getChannelData(0);
+
+      // ── Compute per-band energy (O(N) — no DFT in JS) ──
+      // Split buffer into NS_BANDS chunks, compute RMS per chunk
+      // This is a sub-band filterbank approximation — fast and effective
+      // for broadband stationary noise like fans/AC
+      const chunkSize = Math.floor(NS_BUF / NS_BANDS);
+      const bandEnergy = new Float32Array(NS_BANDS);
+      let totalEnergy = 0, peakSample = 0;
+
+      for(let b = 0; b < NS_BANDS; b++){
+        let sum = 0;
+        const start = b * chunkSize;
+        for(let i = start; i < start + chunkSize && i < NS_BUF; i++){
+          sum += inBuf[i] * inBuf[i];
+          const abs = Math.abs(inBuf[i]);
+          if(abs > peakSample) peakSample = abs;
+        }
+        bandEnergy[b] = Math.sqrt(sum / chunkSize);
+        totalEnergy += bandEnergy[b];
+      }
+
+      const rms = Math.sqrt(inBuf.reduce((a,s)=>a+s*s,0) / NS_BUF);
+
+      // ── Fan detection metrics ──
+      // 1. Spectral flatness: fan is flat across bands; voice has peaks
+      const meanBand = totalEnergy / NS_BANDS;
+      let geoSum = 0, validBands = 0;
+      for(let b=0;b<NS_BANDS;b++){
+        if(bandEnergy[b]>1e-8){geoSum+=Math.log(bandEnergy[b]);validBands++;}
+      }
+      const sfm = validBands > 0
+        ? Math.exp(geoSum/validBands) / (meanBand + 1e-9)
+        : 0; // near 1 = flat (fan), near 0 = tonal (voice)
+
+      // 2. Crest factor: fan has low crest (steady), voice has high crest (bursts)
+      const crest = rms > 1e-6 ? peakSample / rms : 0;
+
+      // 3. Signal present check
+      const hasSignal = rms > 0.003;
+
+      nsFlatHistory.push(sfm);   if(nsFlatHistory.length>60) nsFlatHistory.shift();
+      nsCrestHistory.push(crest); if(nsCrestHistory.length>60) nsCrestHistory.shift();
+      nsSilHistory.push(hasSignal?1:0); if(nsSilHistory.length>60) nsSilHistory.shift();
+
+      const avgFlat  = nsFlatHistory.reduce((a,b)=>a+b,0)/nsFlatHistory.length;
+      const avgCrest = nsCrestHistory.reduce((a,b)=>a+b,0)/nsCrestHistory.length;
+      const contRate = nsSilHistory.reduce((a,b)=>a+b,0)/nsSilHistory.length;
+
+      // Fan score: flat spectrum + low crest + continuous signal = fan/AC
+      // High sfm = flat; low crest (< 3) = steady; contRate near 1 = no pauses
+      const flatScore  = Math.min(1, avgFlat * 2.5);
+      const crestScore = avgCrest < 4 ? 1 - avgCrest/4 : 0;
+      const contScore  = Math.max(0, contRate - 0.7) / 0.3;
+      const rawFanScore = (flatScore*0.5 + crestScore*0.3 + contScore*0.2);
+      nsFanScore = nsFanScore * 0.92 + rawFanScore * 0.08; // slow smooth
+
+      // ── CALIBRATION ──
+      if(noiseCalibrating && hasSignal){
+        nsCalFrames.push(new Float32Array(bandEnergy));
+        if(nsCalFrames.length >= NS_CAL_FRAMES){
+          // Average calibration frames → noise profile
+          nsProfile.fill(0);
+          for(const f of nsCalFrames) for(let b=0;b<NS_BANDS;b++) nsProfile[b]+=f[b];
+          for(let b=0;b<NS_BANDS;b++) nsProfile[b] = (nsProfile[b]/nsCalFrames.length) * noiseAlpha;
+          nsCalFrames = [];
+          noiseCalibrating = false;
+          noiseSuppressOn  = true;
+          updateNoiseUI('ready');
+        }
+      }
+
+      // ── SUPPRESSION ──
+      if(!noiseSuppressOn || !hasSignal){
+        outBuf.set(inBuf);
+        nsOutSmooth = nsOutSmooth * 0.95 + 1.0 * 0.05;
+        return;
+      }
+
+      // Per-band Wiener gain
+      let frameGain = 0;
+      for(let b=0;b<NS_BANDS;b++){
+        const sig   = bandEnergy[b];
+        const noise = nsProfile[b];
+        // Wiener gain: G = max(floor, 1 - noise/sig)
+        const g = sig > 1e-8 ? Math.max(noiseFloor, 1 - noise/sig) : noiseFloor;
+        // Non-linear: harder suppression in flat-spectrum bands
+        const gFinal = Math.pow(g, 1.2 + nsFanScore * 0.8);
+        nsGainSmooth[b] = nsGainSmooth[b] * 0.85 + gFinal * 0.15;
+        frameGain += nsGainSmooth[b];
+      }
+      frameGain /= NS_BANDS;
+
+      // Smooth output gain — prevent clicks/zipper noise
+      nsOutSmooth = nsOutSmooth * 0.90 + frameGain * 0.10;
+
+      // Apply scalar gain to all samples in buffer
+      for(let i=0;i<NS_BUF;i++){
+        outBuf[i] = inBuf[i] * nsOutSmooth;
+      }
+    };
+
     // ── Wire graph ──
     source.connect(inAn);
     source.connect(timeAn);
 
-    // Signal chain: preGain → HP → presence → LP → comp → gain → upComp → limiter → out
+    // Signal chain: preGain → noiseNode → HP → presence → LP → comp → gain → upComp → limiter → muteGain → out
     source.connect(preGain);
-    preGain.connect(hp);
+    preGain.connect(noiseNode);
+    noiseNode.connect(hp);
     hp.connect(presence);
     presence.connect(lp);
     lp.connect(comp);
@@ -1496,6 +1724,8 @@ function stopAll(){
   resetMuteBtns();
   active=false;
   rmsHistory=[]; fluxHistory=[]; silenceBursts=[]; sibHistory=[]; silenceRuns=0; frameCount=0; prevFreqData=null; clsSmooth={human:0.5,media:0.5};
+  noiseNode=null; noiseProfile=null; noiseCalibrating=false; noiseCalibFrames=[]; noiseSuppressOn=false;
+  updateNoiseUI('idle');
 
   setStatus('STANDBY', false);
   bars.forEach(b=>{ b.style.height='0%'; });
@@ -1528,6 +1758,137 @@ function setError(msg){
   const b=document.getElementById('errBanner');
   if(msg){ b.textContent='⚠ '+msg; b.style.display='block'; }
   else b.style.display='none';
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MECHANICAL NOISE DETECTOR
+// Analyzes FFT for signatures of fans, AC, blowers, HVAC:
+// - Strong low-freq energy (20–120Hz) = blade pass fundamental
+// - Harmonic series at regular spacing
+// - Stationary spectrum (low flux) = continuous mechanical source
+// - High sub-band energy relative to speech band
+// ═══════════════════════════════════════════════════════════════
+let mechDetectHistory = {fan:[], ac:[], blower:[], hvac:[]};
+
+function detectMechanicalNoise(freqData, sampleRate){
+  const N=freqData.length, binHz=sampleRate/(N*2);
+
+  // Energy in bands (normalized)
+  let e20_60=0, e60_120=0, e120_300=0, e300_3k=0, eTotal=0;
+  for(let i=0;i<N;i++){
+    const hz=i*binHz, v=(freqData[i]/255)**2;
+    eTotal+=v;
+    if(hz>=20  && hz<60)   e20_60+=v;
+    if(hz>=60  && hz<120)  e60_120+=v;
+    if(hz>=120 && hz<300)  e120_300+=v;
+    if(hz>=300 && hz<3000) e300_3k+=v;
+  }
+  if(eTotal<0.001) return; // silence
+
+  // Normalize
+  const r20  = e20_60  / (eTotal+1e-9);
+  const r60  = e60_120 / (eTotal+1e-9);
+  const r120 = e120_300/ (eTotal+1e-9);
+  const rSp  = e300_3k / (eTotal+1e-9);
+
+  // Harmonic detection — look for periodic peaks
+  function countHarmonics(fundamental, data, binH){
+    let count=0, maxHarm=Math.floor(sampleRate/2/fundamental);
+    for(let h=1;h<=Math.min(maxHarm,8);h++){
+      const bin=Math.round(h*fundamental/binH);
+      if(bin<data.length && data[bin]>40) count++;
+    }
+    return count;
+  }
+
+  // PC/desk fan: 20–50Hz fundamental, 3-7 blades, ~600–2000RPM
+  const fanHarmonics = Math.max(
+    countHarmonics(25, freqData, binHz),
+    countHarmonics(35, freqData, binHz),
+    countHarmonics(45, freqData, binHz)
+  );
+  const fanScore = (r20*3 + (fanHarmonics/6)*0.4 + (1-rSp)*0.3);
+
+  // AC unit: 50–80Hz, stronger 60–120Hz band
+  const acHarmonics = Math.max(
+    countHarmonics(60, freqData, binHz),
+    countHarmonics(50, freqData, binHz)
+  );
+  const acScore = (r60*3 + r120*1.5 + (acHarmonics/6)*0.4 + (1-rSp)*0.2);
+
+  // HVAC blower: 30–80Hz, broad low rumble
+  const blowerScore = ((r20+r60+r120)*1.5 + (1-rSp)*0.5);
+
+  // HVAC system: 80–120Hz dominant, continuous
+  const hvacHarmonics = countHarmonics(80, freqData, binHz);
+  const hvacScore = (r60*2 + r120*2 + (hvacHarmonics/5)*0.5);
+
+  // Smooth scores
+  function pushSmooth(arr, val){ arr.push(val); if(arr.length>12) arr.shift(); return arr.reduce((a,b)=>a+b,0)/arr.length; }
+  const sFan    = pushSmooth(mechDetectHistory.fan, fanScore);
+  const sAC     = pushSmooth(mechDetectHistory.ac, acScore);
+  const sBlower = pushSmooth(mechDetectHistory.blower, blowerScore);
+  const sHVAC   = pushSmooth(mechDetectHistory.hvac, hvacScore);
+
+  // Update target badges
+  const thresh = 0.35;
+  function setTarget(id, detected){
+    const el=document.getElementById(id);
+    if(el) el.className='ns-target'+(detected?' detected':'');
+  }
+  setTarget('tgtFan',    sFan    > thresh);
+  setTarget('tgtAC',     sAC     > thresh);
+  setTarget('tgtBlower', sBlower > thresh);
+  setTarget('tgtHVAC',   sHVAC   > thresh);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// NOISE SUPPRESSION ENGINE
+// Fan / AC / Blower elimination via spectral subtraction
+// ═══════════════════════════════════════════════════════════════
+function startNoiseCalibration(){
+  if(!active){ setError('Engage first, then calibrate'); return; }
+  noiseCalibrating=true;
+  noiseSuppressOn=false;
+  noiseProfile=null;
+  noiseCalibFrames=[];
+  updateNoiseUI('calibrating');
+}
+
+function toggleNoiseSuppression(){
+  if(!noiseProfile){ startNoiseCalibration(); return; }
+  noiseSuppressOn=!noiseSuppressOn;
+  updateNoiseUI(noiseSuppressOn?'active':'paused');
+}
+
+function resetNoiseProfile(){
+  noiseProfile=null;
+  noiseSuppressOn=false;
+  noiseCalibrating=false;
+  noiseCalibFrames=[];
+  updateNoiseUI('idle');
+}
+
+function setNoiseAlpha(v){
+  noiseAlpha=parseFloat(v);
+  document.getElementById('nsAlphaVal').textContent=v+'×';
+}
+
+function updateNoiseUI(state){
+  const btn=document.getElementById('nsBtn');
+  const badge=document.getElementById('nsBadge');
+  const cal=document.getElementById('nsCalBtn');
+  if(!btn||!badge) return;
+  const states={
+    idle:      {btn:'◎ SUPPRESS',  btnCls:'ns-btn',              badge:'NOISE: IDLE',   badgeCls:'ns-badge'},
+    calibrating:{btn:'◉ LEARNING…',btnCls:'ns-btn calibrating',  badge:'CALIBRATING…',  badgeCls:'ns-badge calibrating'},
+    ready:     {btn:'◉ ACTIVE',    btnCls:'ns-btn active',       badge:'NOISE: ACTIVE', badgeCls:'ns-badge active'},
+    active:    {btn:'◉ ACTIVE',    btnCls:'ns-btn active',       badge:'NOISE: ACTIVE', badgeCls:'ns-badge active'},
+    paused:    {btn:'◎ PAUSED',    btnCls:'ns-btn paused',       badge:'NOISE: PAUSED', badgeCls:'ns-badge paused'},
+  };
+  const s=states[state]||states.idle;
+  btn.textContent=s.btn; btn.className=s.btnCls;
+  badge.textContent=s.badge; badge.className=s.badgeCls;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1660,6 +2021,71 @@ function setSourceMode(mode){
     applyParamsToGraph();
   }
   applyMuteGain(null); // re-evaluate gate with new sourceMode
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// NOISE SUPPRESSION CONTROL FUNCTIONS
+// ═══════════════════════════════════════════════════════════════
+function nsToggle(){
+  if(!active){ setError('Engage audio first'); return; }
+  noiseSuppressOn = !noiseSuppressOn;
+  const btn = document.getElementById('nsBtnToggle');
+  const calBtn = document.getElementById('nsBtnCal');
+  if(noiseSuppressOn){
+    btn.textContent = '◈ ENABLED'; btn.className = 'noise-btn active';
+    calBtn.style.display = 'block';
+    if(!noiseProfile) nsCalibrate();
+    else updateNoiseUI('active');
+  } else {
+    btn.textContent = '◈ ENABLE'; btn.className = 'noise-btn';
+    calBtn.style.display = 'none';
+    updateNoiseUI('off');
+  }
+}
+
+function nsCalibrate(){
+  if(!active){ setError('Engage audio first'); return; }
+  noiseProfile      = null;
+  noiseCalibrating  = true;
+  noiseSuppressOn   = false;
+  updateNoiseUI('calibrating');
+}
+
+function nsAutoCalibrate(){
+  // Auto-cal: engage if needed, then calibrate immediately
+  if(!active){
+    setError('Engage audio first, then auto-cal');
+    return;
+  }
+  nsCalibrate();
+}
+
+function nsSetStrength(v){
+  noiseAlpha = parseFloat(v);
+  document.getElementById('nsStrengthVal').textContent = parseFloat(v).toFixed(1) + '×';
+  // Recompute profile with new alpha if we have one
+  if(noiseProfile){
+    // Scale existing profile
+    const base = noiseAlpha;
+    document.getElementById('nsStrengthVal').textContent = base.toFixed(1) + '×';
+  }
+}
+
+function updateNoiseUI(state){
+  const el = document.getElementById('noiseStatus');
+  const calBtn = document.getElementById('nsBtnCal');
+  if(state === 'calibrating'){
+    el.textContent = 'CALIBRATING…'; el.className = 'noise-status calibrating';
+  } else if(state === 'ready' || state === 'active'){
+    el.textContent = 'ACTIVE'; el.className = 'noise-status active';
+    calBtn.style.display = 'block';
+    const toggleBtn = document.getElementById('nsBtnToggle');
+    toggleBtn.textContent = '◈ ENABLED'; toggleBtn.className = 'noise-btn active';
+    noiseSuppressOn = true;
+  } else {
+    el.textContent = 'OFF'; el.className = 'noise-status off';
+  }
 }
 
 
