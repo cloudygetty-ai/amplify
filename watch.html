@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no"/>
+<title>AMPLIFY Watch</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Outfit:wght@400;600&family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
+<style>
+:root{
+  --violet:#7c3aed;--purple:#a855f7;--lavender:#c084fc;
+  --indigo:#818cf8;--silver:#e6e6fa;--silver-dim:#9090b8;
+  --pink:#e879f9;--rose:#f472b6;--amber:#fbbf24;
+  --bg:#07050f;--bg1:#0f0b1e;
+  --steel-hi:#d4d8e8;
+  --border:rgba(168,85,247,.2);
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+
+body{
+  background:radial-gradient(ellipse 160% 120% at 50% 0%,#2a1060 0%,#110828 45%,var(--bg) 80%);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  min-height:100vh;font-family:'Share Tech Mono',monospace;
+  padding:16px;overflow:hidden;
+}
+
+/* Scanlines */
+body::before{
+  content:'';position:fixed;inset:0;pointer-events:none;z-index:999;
+  background:repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,.07) 3px,rgba(0,0,0,.07) 4px);
+}
+
+/* Stars */
+.ws{position:fixed;inset:0;pointer-events:none}
+.ws::before{
+  content:'';position:absolute;inset:0;
+  background-image:
+    radial-gradient(1px 1px at 15% 10%,rgba(230,230,250,.8) 0%,transparent 100%),
+    radial-gradient(1px 1px at 40% 6%,rgba(192,132,252,.7) 0%,transparent 100%),
+    radial-gradient(1.5px 1.5px at 70% 15%,rgba(230,230,250,.9) 0%,transparent 100%),
+    radial-gradient(1px 1px at 85% 8%,rgba(129,140,248,.6) 0%,transparent 100%),
+    radial-gradient(1px 1px at 25% 80%,rgba(192,132,252,.5) 0%,transparent 100%),
+    radial-gradient(1px 1px at 60% 85%,rgba(230,230,250,.4) 0%,transparent 100%),
+    radial-gradient(1px 1px at 90% 75%,rgba(129,140,248,.6) 0%,transparent 100%);
+  animation:tw 8s ease-in-out infinite alternate;
+}
+@keyframes tw{0%{opacity:.5}100%{opacity:1}}
+
+/* ── WATCH FACE ── */
+.watch{
+  width:min(320px,90vw);
+  position:relative;z-index:1;
+}
+
+/* Watch case — stainless steel bezel */
+.watch-case{
+  border-radius:36% / 28%;
+  padding:3px;
+  background:linear-gradient(145deg,
+    #d4d8e8 0%,#8890a8 20%,#c8cce0 35%,
+    #5a5f78 50%,#c0c4d8 65%,#8890a8 80%,#d4d8e8 100%
+  );
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,.15),
+    0 4px 24px rgba(0,0,0,.8),
+    0 0 80px rgba(124,58,237,.2),
+    inset 0 1px 2px rgba(255,255,255,.4);
+}
+
+/* Watch glass — painted gloss */
+.watch-glass{
+  border-radius:34% / 26%;
+  padding:12px;
+  background:linear-gradient(160deg,
+    rgba(43,30,90,.92) 0%,
+    rgba(22,15,46,.96) 45%,
+    rgba(10,7,22,.98) 100%
+  );
+  border:1px solid rgba(168,85,247,.15);
+  position:relative;overflow:hidden;
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,.08) inset,
+    0 2px 0 rgba(255,255,255,.1) inset;
+}
+/* Glass gloss top */
+.watch-glass::before{
+  content:'';position:absolute;top:0;left:5%;right:5%;height:45%;
+  background:linear-gradient(180deg,rgba(255,255,255,.12) 0%,rgba(255,255,255,.02) 60%,transparent 100%);
+  border-radius:0 0 80% 80%;pointer-events:none;z-index:10;
+}
+/* Glass reflection streak */
+.watch-glass::after{
+  content:'';position:absolute;top:5%;left:15%;width:20%;height:35%;
+  background:linear-gradient(135deg,rgba(255,255,255,.08) 0%,transparent 100%);
+  border-radius:50%;transform:rotate(-20deg);pointer-events:none;z-index:10;
+}
+
+/* ── WATCH CONTENT ── */
+.watch-inner{position:relative;z-index:2}
+
+/* LOGO */
+.w-brand{
+  text-align:center;padding:6px 0 4px;
+  font-family:'Orbitron',monospace;font-size:11px;font-weight:900;
+  letter-spacing:.2em;
+  background:linear-gradient(135deg,var(--steel-hi) 0%,var(--lavender) 60%,var(--indigo) 100%);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+  filter:drop-shadow(0 0 8px rgba(192,132,252,.4));
+}
+
+/* ── SCOPE ── */
+.w-scope{
+  height:40px;background:rgba(0,0,0,.5);
+  border:1px solid rgba(168,85,247,.15);border-radius:8px;
+  margin:6px 0;position:relative;overflow:hidden;
+}
+.w-scope canvas{display:block;width:100%;height:100%}
+.w-scope::before{content:'';position:absolute;left:0;right:0;top:50%;height:1px;background:rgba(168,85,247,.08)}
+.w-scope::after{
+  content:'';position:absolute;top:0;left:0;right:0;height:40%;
+  background:linear-gradient(180deg,rgba(255,255,255,.05) 0%,transparent 100%);
+  border-radius:8px 8px 0 0;pointer-events:none;
+}
+
+/* STATUS ROW */
+.w-status-row{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:4px 0;
+}
+.w-pulse{
+  width:8px;height:8px;border-radius:50%;
+  background:rgba(100,80,180,.3);transition:all .3s;flex-shrink:0;
+}
+.w-pulse.on{
+  background:var(--lavender);
+  box-shadow:0 0 8px var(--lavender),0 0 16px rgba(192,132,252,.4);
+  animation:wpulse 1.5s ease-out infinite;
+}
+.w-pulse.scan{background:var(--amber);box-shadow:0 0 6px var(--amber)}
+@keyframes wpulse{0%{box-shadow:0 0 4px rgba(192,132,252,.6)}50%{box-shadow:0 0 14px rgba(192,132,252,.9),0 0 30px rgba(192,132,252,.3)}100%{box-shadow:0 0 4px rgba(192,132,252,.6)}}
+.w-status-text{
+  font-size:9px;letter-spacing:.2em;
+  color:var(--silver-dim);font-family:'Outfit',sans-serif;font-weight:600;
+}
+.w-status-text.on{color:var(--silver)}
+.w-nf{font-size:8px;color:rgba(100,80,180,.5);letter-spacing:.12em}
+.w-nf span{color:var(--silver-dim)}
+
+/* VERDICT BADGE */
+.w-verdict{
+  padding:6px 10px;font-size:9px;letter-spacing:.2em;
+  border:1px solid rgba(168,85,247,.15);border-radius:8px;
+  text-align:center;color:rgba(100,80,180,.5);
+  font-family:'Outfit',sans-serif;font-weight:600;
+  margin:4px 0;transition:all .3s;
+  background:rgba(0,0,0,.3);
+}
+.w-verdict.human{
+  border-color:rgba(192,132,252,.4);color:var(--lavender);
+  background:rgba(168,85,247,.1);
+  box-shadow:0 0 12px rgba(168,85,247,.12);
+}
+.w-verdict.media{border-color:rgba(251,191,36,.35);color:var(--amber);background:rgba(251,191,36,.07)}
+
+/* SOURCE LOCK STRIP */
+.w-src{display:flex;gap:4px;margin:4px 0}
+.w-src-btn{
+  flex:1;padding:6px 4px;font-size:8px;letter-spacing:.12em;
+  border-radius:16px;cursor:pointer;font-family:'Share Tech Mono',monospace;
+  transition:all .18s;text-align:center;
+  background:linear-gradient(180deg,rgba(255,255,255,.07) 0%,rgba(0,0,0,.2) 100%);
+  border:1px solid rgba(255,255,255,.08);color:rgba(100,80,180,.5);
+  box-shadow:0 1px 0 rgba(255,255,255,.1) inset;
+  -webkit-tap-highlight-color:transparent;
+}
+.w-src-btn:active{transform:scale(.96)}
+.w-src-btn.active-human{
+  background:linear-gradient(180deg,rgba(168,85,247,.4) 0%,rgba(109,40,217,.2) 100%);
+  border-color:rgba(192,132,252,.45);color:var(--lavender);
+  box-shadow:0 1px 0 rgba(255,255,255,.2) inset,0 0 10px rgba(168,85,247,.2);
+}
+.w-src-btn.active-auto{
+  background:linear-gradient(180deg,rgba(129,140,248,.3) 0%,rgba(99,102,241,.15) 100%);
+  border-color:rgba(129,140,248,.4);color:var(--indigo);
+}
+.w-src-btn.active-media{
+  background:linear-gradient(180deg,rgba(251,191,36,.3) 0%,rgba(251,191,36,.1) 100%);
+  border-color:rgba(251,191,36,.4);color:var(--amber);
+}
+
+/* MUTE BUTTONS */
+.w-mute{display:flex;gap:4px;margin:4px 0}
+.w-mute-btn{
+  flex:1;padding:8px 6px;font-size:9px;letter-spacing:.12em;
+  border-radius:10px;cursor:pointer;font-family:'Share Tech Mono',monospace;
+  transition:all .2s;display:flex;align-items:center;justify-content:center;gap:5px;
+  background:linear-gradient(160deg,rgba(255,255,255,.09) 0%,rgba(0,0,0,.2) 100%);
+  border:1px solid rgba(255,255,255,.09);color:var(--silver-dim);
+  box-shadow:0 1px 0 rgba(255,255,255,.12) inset,0 3px 12px rgba(0,0,0,.4);
+  -webkit-tap-highlight-color:transparent;
+}
+.w-mute-btn:active{transform:scale(.97)}
+.w-mute-btn.muted{
+  background:linear-gradient(160deg,rgba(244,114,182,.35) 0%,rgba(190,24,93,.2) 100%);
+  border-color:rgba(244,114,182,.4);color:var(--rose);
+  box-shadow:0 1px 0 rgba(255,255,255,.15) inset,0 0 14px rgba(244,114,182,.2);
+}
+.w-mute-icon{font-size:12px}
+
+/* ── ENGAGE BUTTON — crown jewel ── */
+.w-engage{
+  width:100%;padding:14px;font-size:11px;letter-spacing:.4em;
+  cursor:pointer;transition:all .25s;font-family:'Orbitron',monospace;font-weight:700;
+  border-radius:24px;margin-top:6px;position:relative;overflow:hidden;
+  background:linear-gradient(160deg,rgba(139,92,246,.5) 0%,rgba(109,40,217,.3) 50%,rgba(76,29,149,.4) 100%);
+  border:1px solid rgba(192,132,252,.4);color:var(--lavender);
+  box-shadow:
+    0 2px 0 rgba(255,255,255,.18) inset,
+    0 0 24px rgba(139,92,246,.25),
+    0 0 50px rgba(139,92,246,.08),
+    0 6px 24px rgba(0,0,0,.6);
+  -webkit-tap-highlight-color:transparent;
+}
+.w-engage::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:50%;
+  background:linear-gradient(180deg,rgba(255,255,255,.12) 0%,transparent 100%);
+  pointer-events:none;
+}
+.w-engage:active{transform:scale(.97)}
+.w-engage.on{
+  background:linear-gradient(160deg,rgba(244,114,182,.45) 0%,rgba(190,24,93,.28) 50%,rgba(131,24,67,.38) 100%);
+  border-color:rgba(244,114,182,.45);color:var(--rose);
+  box-shadow:0 2px 0 rgba(255,255,255,.15) inset,0 0 24px rgba(244,114,182,.25),0 6px 24px rgba(0,0,0,.6);
+}
+
+/* ULTRA */
+.w-ultra{
+  display:flex;gap:4px;margin:4px 0;
+}
+.w-ultra-btn{
+  flex:1;padding:7px;font-size:9px;letter-spacing:.15em;
+  border-radius:12px;cursor:pointer;font-family:'Share Tech Mono',monospace;
+  transition:all .2s;text-align:center;
+  background:linear-gradient(180deg,rgba(255,255,255,.07) 0%,rgba(0,0,0,.2) 100%);
+  border:1px solid rgba(255,255,255,.08);color:rgba(100,80,180,.5);
+  box-shadow:0 1px 0 rgba(255,255,255,.1) inset;
+  -webkit-tap-highlight-color:transparent;
+}
+.w-ultra-btn.on{
+  background:linear-gradient(180deg,rgba(232,121,249,.4) 0%,rgba(168,85,247,.2) 100%);
+  border-color:rgba(232,121,249,.5);color:var(--pink);
+  box-shadow:0 1px 0 rgba(255,255,255,.2) inset,0 0 14px rgba(232,121,249,.3);
+  animation:ultraW 1.4s ease-in-out infinite;
+}
+@keyframes ultraW{0%,100%{box-shadow:0 1px 0 rgba(255,255,255,.2) inset,0 0 8px rgba(232,121,249,.2)}50%{box-shadow:0 1px 0 rgba(255,255,255,.2) inset,0 0 20px rgba(232,121,249,.5)}}
+
+/* VU STRIP */
+.w-vu-strip{
+  display:flex;align-items:flex-end;gap:1px;height:16px;
+  background:rgba(0,0,0,.4);border-radius:4px;overflow:hidden;
+  margin:4px 0;border:1px solid rgba(168,85,247,.1);padding:2px;
+}
+.w-vu-bar{flex:1;min-height:1px;border-radius:1px;transition:height .055s}
+
+/* CROWN BUTTON */
+.watch-crown{
+  position:absolute;right:-18px;top:50%;transform:translateY(-50%);
+  width:16px;height:40px;
+  background:linear-gradient(90deg,#8890a8 0%,#d4d8e8 30%,#c0c4d8 60%,#8890a8 100%);
+  border-radius:4px;
+  box-shadow:2px 0 6px rgba(0,0,0,.5),inset 1px 0 rgba(255,255,255,.3);
+}
+.watch-crown::after{
+  content:'';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+  width:8px;height:8px;border-radius:50%;
+  background:radial-gradient(circle,#e6e6fa 0%,#8890a8 100%);
+  box-shadow:0 0 4px rgba(192,132,252,.4);
+}
+
+/* Error */
+.w-error{
+  font-size:8px;color:var(--rose);letter-spacing:.1em;text-align:center;
+  padding:4px;background:rgba(244,114,182,.08);border-radius:6px;
+  border:1px solid rgba(244,114,182,.2);margin:3px 0;display:none;
+}
+.w-error.show{display:block}
+</style>
+</head>
+<body>
+<div class="ws"></div>
+
+<div class="watch">
+  <div class="watch-case">
+    <div class="watch-glass">
+      <div class="watch-crown"></div>
+      <div class="watch-inner">
+
+        <div class="w-brand">AMPLIFY</div>
+
+        <!-- Scope -->
+        <div class="w-scope"><canvas id="wScopeCanvas"></canvas></div>
+
+        <!-- VU Strip -->
+        <div class="w-vu-strip" id="wVuStrip"></div>
+
+        <!-- Status -->
+        <div class="w-status-row">
+          <div class="w-pulse" id="wPulse"></div>
+          <span class="w-status-text" id="wStatus">STANDBY</span>
+          <span class="w-nf">NF <span id="wNf">—</span></span>
+        </div>
+
+        <!-- Verdict -->
+        <div class="w-verdict" id="wVerdict">AWAITING SIGNAL</div>
+
+        <!-- Error -->
+        <div class="w-error" id="wError"></div>
+
+        <!-- Source Lock -->
+        <div class="w-src">
+          <button class="w-src-btn" id="wSrcH" onclick="wSetMode('human')">◈ HUMAN</button>
+          <button class="w-src-btn active-auto" id="wSrcA" onclick="wSetMode('auto')">⟳ AUTO</button>
+          <button class="w-src-btn" id="wSrcM" onclick="wSetMode('media')">◈ MEDIA</button>
+        </div>
+
+        <!-- Mute -->
+        <div class="w-mute">
+          <button class="w-mute-btn" id="wMuteH" onclick="wToggleMute('human')">
+            <span class="w-mute-icon">🎙</span><span id="wMuteHLabel">MUTE MIC</span>
+          </button>
+          <button class="w-mute-btn" id="wMuteM" onclick="wToggleMute('media')">
+            <span class="w-mute-icon">📺</span><span id="wMuteMLabel">MUTE TV</span>
+          </button>
+        </div>
+
+        <!-- Ultra -->
+        <div class="w-ultra">
+          <button class="w-ultra-btn" id="wUltra" onclick="wToggleUltra()">⚡ ULTRA 1dB→33dB</button>
+        </div>
+
+        <!-- Engage -->
+        <button class="w-engage" id="wEngage" onclick="wToggleEngage()">ENGAGE</button>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ══════════════════════════════════════════════════════
+// AMPLIFY WATCH — Standalone audio engine
+// Same DSP chain as main app, watch-optimized UI
+// ══════════════════════════════════════════════════════
+const PRESETS = {
+  "Low Voice":  { voiceBoost:3.5, threshold:-45, lowCut:80,  highCut:3500, presenceGain:3, presenceFreq:2500 },
+  "Whisper":    { voiceBoost:5.0, threshold:-55, lowCut:100, highCut:2800, presenceGain:5, presenceFreq:2000 },
+  "Distance":   { voiceBoost:6.0, threshold:-58, lowCut:120, highCut:3200, presenceGain:6, presenceFreq:2200 },
+};
+
+let wActive=false, wUltraMode=false, wSrcMode='auto';
+let wMuteHuman=false, wMuteMedia=false;
+let wCtx=null, wStream=null;
+let wGain=null, wHp=null, wLp=null, wComp=null, wPresence=null;
+let wPreGain=null, wUpComp=null, wLimiter=null, wMuteGain=null;
+let wInAn=null, wOutAn=null, wTimeAn=null;
+let wRaf=null, wNf=-60, wParams={...PRESETS["Low Voice"]};
+
+// Classifier state
+let wPrevFreq=null, wRmsHist=[], wFluxHist=[], wSilRuns=0, wSilBursts=[];
+let wSibHist=[], wDynHist=[], wClsSmooth={human:0.5,media:0.5}, wFrameCount=0;
+let wLastVerdict='MIXED';
+
+// ── BUILD VU BARS ──
+const vuStrip = document.getElementById('wVuStrip');
+const wBars=[];
+for(let i=0;i<24;i++){
+  const b=document.createElement('div');
+  b.className='w-vu-bar';
+  b.style.height='1px';
+  vuStrip.appendChild(b); wBars.push(b);
+}
+
+// ── SCOPE ──
+const wScope = document.getElementById('wScopeCanvas');
+const wScopeCtx = wScope ? wScope.getContext('2d') : null;
+
+function drawWScope(buf){
+  if(!wScopeCtx || !buf) return;
+  const W = wScope.offsetWidth || 280;
+  const H = wScope.offsetHeight || 40;
+  if(wScope.width!==W) wScope.width=W;
+  if(wScope.height!==H) wScope.height=H;
+  wScopeCtx.clearRect(0,0,W,H);
+  wScopeCtx.beginPath();
+  wScopeCtx.strokeStyle='rgba(192,132,252,0.6)';
+  wScopeCtx.lineWidth=1.5;
+  wScopeCtx.shadowColor='#a855f7';
+  wScopeCtx.shadowBlur=8;
+  const sl=W/buf.length;
+  let x=0;
+  for(let i=0;i<buf.length;i++){
+    const y=(buf[i]/128)*H/2;
+    i===0?wScopeCtx.moveTo(x,y):wScopeCtx.lineTo(x,y);
+    x+=sl;
+  }
+  wScopeCtx.stroke();
+  wScopeCtx.shadowBlur=0;
+}
+
+// ── CLASSIFIER (same algorithm as main app) ──
+function wVariance(arr){
+  if(arr.length<2) return 0;
+  const m=arr.reduce((a,b)=>a+b,0)/arr.length;
+  return arr.reduce((a,b)=>a+(b-m)**2,0)/arr.length;
+}
+
+function wClassify(freqData, timeData, sr){
+  const N=freqData.length, binHz=sr/(N*2);
+  let rmsSum=0;
+  for(let i=0;i<timeData.length;i++){const s=(timeData[i]-128)/128;rmsSum+=s*s;}
+  const rms=Math.sqrt(rmsSum/timeData.length);
+  let flux=0;
+  if(wPrevFreq){for(let i=0;i<N;i++){const d=(freqData[i]-wPrevFreq[i])/255;flux+=d*d;}flux=Math.sqrt(flux/N);}
+  wPrevFreq=new Uint8Array(freqData);
+  wFluxHist.push(flux); if(wFluxHist.length>90)wFluxHist.shift();
+  const fluxVar=wVariance(wFluxHist);
+  wRmsHist.push(rms); if(wRmsHist.length>180)wRmsHist.shift();
+  const rmsVar=wVariance(wRmsHist);
+  const rmsMean=wRmsHist.reduce((a,b)=>a+b,0)/wRmsHist.length;
+  let rmsCross=0;
+  for(let i=1;i<wRmsHist.length;i++){if((wRmsHist[i]>rmsMean)!==(wRmsHist[i-1]>rmsMean))rmsCross++;}
+  const amRate=rmsCross/wRmsHist.length;
+  let subBass=0,lowMid=0;
+  for(let i=0;i<N;i++){const hz=i*binHz,v=(freqData[i]/255)**2;if(hz<100)subBass+=v;else if(hz<350)lowMid+=v;}
+  const subRatio=subBass/(lowMid+subBass+1e-9);
+  const isSilent=rms<0.035;
+  if(isSilent){wSilRuns++;}else{if(wSilRuns>2&&wSilRuns<80){wSilBursts.push(wSilRuns);if(wSilBursts.length>20)wSilBursts.shift();}wSilRuns=0;}
+  const burstScore=wSilBursts.length>3?Math.min(1,wSilBursts.length/12):0;
+  let sibE=0;
+  for(let i=0;i<N;i++){const hz=i*binHz;if(hz>=4000&&hz<=8000)sibE+=(freqData[i]/255)**2;}
+  wSibHist.push(sibE); if(wSibHist.length>30)wSibHist.shift();
+  const sibVar=wVariance(wSibHist);
+  let hS=0,mS=0;
+  const fvS=Math.min(1,fluxVar*1200);hS+=fvS*28;mS+=(1-fvS)*18;
+  const amH=amRate>0.06&&amRate<0.50?1-Math.abs(amRate-0.22)/0.22:0;
+  const amM=amRate<0.05?1:amRate>0.55?0.7:0;
+  hS+=Math.max(0,amH)*28;mS+=amM*18;
+  if(subRatio>0.28)mS+=Math.min(1,(subRatio-0.28)*5)*14;
+  if(subRatio<0.22)hS+=(1-subRatio/0.22)*8;
+  hS+=burstScore*24;mS+=Math.max(0,0.6-burstScore)*12;
+  const sS=Math.min(1,sibVar*600);hS+=sS*10;mS+=(1-sS)*8;
+  const rvS=Math.min(1,rmsVar*180);hS+=rvS*10;mS+=Math.max(0,1-rvS*2)*8;
+  hS+=6;
+  const tot=hS+mS+1e-9,hRaw=hS/tot;
+  const aH=hRaw>wClsSmooth.human?0.25:0.08;
+  wClsSmooth.human=wClsSmooth.human*(1-aH)+hRaw*aH;
+  wClsSmooth.media=1-wClsSmooth.human;
+  const conf=Math.abs(wClsSmooth.human-wClsSmooth.media);
+  let verdict='MIXED';
+  if(wFrameCount<480){verdict=wClsSmooth.media>0.80?'MEDIA':'HUMAN';}
+  else if(conf>0.15){verdict=wClsSmooth.media>wClsSmooth.human&&wClsSmooth.media>0.65?'MEDIA':wClsSmooth.human>wClsSmooth.media?'HUMAN':'MIXED';}
+  return {verdict,human:wClsSmooth.human,media:wClsSmooth.media,conf};
+}
+
+function wApplyMuteGain(verdict){
+  if(verdict)wLastVerdict=verdict;
+  if(!wMuteGain)return;
+  let eff=wSrcMode==='human'?'HUMAN':wSrcMode==='media'?'MEDIA':wLastVerdict;
+  let tg=1.0;
+  if(wMuteHuman&&eff==='HUMAN')tg=0.0;
+  else if(wMuteMedia&&eff==='MEDIA')tg=0.0;
+  wMuteGain.gain.cancelScheduledValues(wMuteGain.context.currentTime);
+  wMuteGain.gain.setTargetAtTime(tg,wMuteGain.context.currentTime,0.02);
+}
+
+// ── TICK ──
+function wTick(){
+  if(!wInAn||!wOutAn)return;
+  const fd=new Uint8Array(wInAn.frequencyBinCount);
+  const td=new Uint8Array(wTimeAn.fftSize);
+  wInAn.getByteFrequencyData(fd);
+  wTimeAn.getByteTimeDomainData(td);
+  drawWScope(td);
+
+  const avg=fd.reduce((a,b)=>a+b,0)/fd.length/255;
+  const db=avg>0?20*Math.log10(Math.max(avg,0.0001)):-80;
+  wNf=wNf*.97+db*.03;
+  document.getElementById('wNf').textContent=Math.round(wNf)+'dB';
+
+  // VU bars
+  const step=Math.max(1,Math.floor(fd.length/24));
+  wBars.forEach((b,i)=>{
+    const v=fd[Math.min(i*step,fd.length-1)]||0;
+    const pct=(v/255)*100;
+    b.style.height=pct+'%';
+    b.style.background=v>200?'var(--rose)':v>120?'var(--amber)':'var(--lavender)';
+    b.style.boxShadow=v>80?`0 0 3px rgba(192,132,252,${(v/255)*.5})`:'none';
+  });
+
+  // Classify every 4th frame
+  wFrameCount++;
+  if(wFrameCount%4===0&&avg>0.005){
+    const cls=wClassify(fd,td,wCtx.sampleRate);
+    wApplyMuteGain(cls.verdict);
+    const vEl=document.getElementById('wVerdict');
+    if(wSrcMode!=='auto'){
+      vEl.textContent=wSrcMode==='human'?'◈ HUMAN [LOCKED]':'◈ MEDIA [LOCKED]';
+      vEl.className='w-verdict '+(wSrcMode==='human'?'human':'media');
+    } else if(cls.verdict==='HUMAN'){
+      vEl.textContent='◈ HUMAN VOICE';vEl.className='w-verdict human';
+    } else if(cls.verdict==='MEDIA'){
+      vEl.textContent='◈ MEDIA / BROADCAST';vEl.className='w-verdict media';
+    } else {
+      vEl.textContent='◈ MIXED SOURCE';vEl.className='w-verdict';
+    }
+  } else if(avg<=0.005){
+    document.getElementById('wVerdict').textContent='SILENCE';
+    document.getElementById('wVerdict').className='w-verdict';
+  }
+
+  wRaf=requestAnimationFrame(wTick);
+}
+
+// ── ENGAGE ──
+async function wToggleEngage(){
+  if(wActive){wStopAll();return;}
+  const btn=document.getElementById('wEngage');
+  const errEl=document.getElementById('wError');
+  errEl.className='w-error';
+  btn.textContent='CONNECTING…';
+  try{
+    wStream=await navigator.mediaDevices.getUserMedia({
+      audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}
+    });
+    wCtx=new(window.AudioContext||window.webkitAudioContext)({sampleRate:44100});
+    const src=wCtx.createMediaStreamSource(wStream);
+
+    wInAn=wCtx.createAnalyser(); wInAn.fftSize=256; wInAn.smoothingTimeConstant=.75;
+    wTimeAn=wCtx.createAnalyser(); wTimeAn.fftSize=256; wTimeAn.smoothingTimeConstant=0;
+    wOutAn=wCtx.createAnalyser(); wOutAn.fftSize=256; wOutAn.smoothingTimeConstant=.75;
+
+    wPreGain=wCtx.createGain(); wPreGain.gain.value=1;
+    wHp=wCtx.createBiquadFilter(); wHp.type='highpass'; wHp.frequency.value=wParams.lowCut; wHp.Q.value=0.7;
+    wPresence=wCtx.createBiquadFilter(); wPresence.type='peaking'; wPresence.frequency.value=wParams.presenceFreq; wPresence.Q.value=1.2; wPresence.gain.value=wParams.presenceGain;
+    wLp=wCtx.createBiquadFilter(); wLp.type='lowpass'; wLp.frequency.value=wParams.highCut; wLp.Q.value=0.7;
+    wComp=wCtx.createDynamicsCompressor(); wComp.threshold.value=wParams.threshold; wComp.knee.value=12; wComp.ratio.value=12; wComp.attack.value=0.002; wComp.release.value=0.08;
+    wGain=wCtx.createGain(); wGain.gain.value=wParams.voiceBoost;
+    wUpComp=wCtx.createDynamicsCompressor(); wUpComp.threshold.value=-80; wUpComp.knee.value=30; wUpComp.ratio.value=0.2; wUpComp.attack.value=0.001; wUpComp.release.value=0.05;
+    wLimiter=wCtx.createDynamicsCompressor(); wLimiter.threshold.value=-1; wLimiter.knee.value=0; wLimiter.ratio.value=20; wLimiter.attack.value=0.001; wLimiter.release.value=0.1;
+    wMuteGain=wCtx.createGain(); wMuteGain.gain.value=1;
+
+    src.connect(wInAn); src.connect(wTimeAn);
+    src.connect(wPreGain);
+    wPreGain.connect(wHp); wHp.connect(wPresence); wPresence.connect(wLp);
+    wLp.connect(wComp); wComp.connect(wGain); wGain.connect(wUpComp);
+    wUpComp.connect(wLimiter); wLimiter.connect(wMuteGain);
+    wMuteGain.connect(wOutAn); wOutAn.connect(wCtx.destination);
+
+    if(wUltraMode){
+      wPreGain.gain.value=45;wComp.threshold.value=-72;wComp.ratio.value=20;
+      wGain.gain.value=Math.max(wParams.voiceBoost,6);
+    }
+
+    wRaf=requestAnimationFrame(wTick);
+    wActive=true;
+    btn.textContent='DISENGAGE';btn.className='w-engage on';
+    document.getElementById('wPulse').className='w-pulse on';
+    document.getElementById('wStatus').textContent='ACTIVE';
+    document.getElementById('wStatus').className='w-status-text on';
+  } catch(e){
+    errEl.textContent='⚠ '+( e.message||'Mic denied');
+    errEl.className='w-error show';
+    btn.textContent='ENGAGE';btn.className='w-engage';
+  }
+}
+
+function wStopAll(){
+  cancelAnimationFrame(wRaf);
+  try{wCtx&&wCtx.close();}catch(_){}
+  wStream&&wStream.getTracks().forEach(t=>t.stop());
+  wCtx=null;wStream=null;wInAn=null;wOutAn=null;wTimeAn=null;
+  wGain=null;wHp=null;wLp=null;wComp=null;wPresence=null;
+  wPreGain=null;wUpComp=null;wLimiter=null;wMuteGain=null;
+  wActive=false;wFrameCount=0;wPrevFreq=null;
+  wRmsHist=[];wFluxHist=[];wSilBursts=[];wSibHist=[];wSilRuns=0;
+  wClsSmooth={human:0.5,media:0.5};
+  document.getElementById('wEngage').textContent='ENGAGE';
+  document.getElementById('wEngage').className='w-engage';
+  document.getElementById('wPulse').className='w-pulse';
+  document.getElementById('wStatus').textContent='STANDBY';
+  document.getElementById('wStatus').className='w-status-text';
+  document.getElementById('wVerdict').textContent='AWAITING SIGNAL';
+  document.getElementById('wVerdict').className='w-verdict';
+  document.getElementById('wNf').textContent='—';
+  wBars.forEach(b=>{b.style.height='1px';b.style.boxShadow='none';});
+  if(wScopeCtx&&wScope)wScopeCtx.clearRect(0,0,wScope.width,wScope.height);
+}
+
+function wSetMode(m){
+  wSrcMode=m;
+  ['H','A','M'].forEach((k,i)=>{
+    const id='wSrc'+k;
+    const modes=['human','auto','media'];
+    document.getElementById(id).className='w-src-btn'+(m===modes[i]?' active-'+modes[i]:'');
+  });
+  wApplyMuteGain(null);
+}
+
+function wToggleMute(src){
+  if(src==='human'){
+    wMuteHuman=!wMuteHuman;
+    if(wMuteHuman&&wMuteMedia){wMuteMedia=false;document.getElementById('wMuteM').className='w-mute-btn';document.getElementById('wMuteMLabel').textContent='MUTE TV';}
+    const btn=document.getElementById('wMuteH');
+    const lbl=document.getElementById('wMuteHLabel');
+    btn.className='w-mute-btn'+(wMuteHuman?' muted':'');
+    lbl.textContent=wMuteHuman?'✕ MIC OFF':'MUTE MIC';
+  } else {
+    wMuteMedia=!wMuteMedia;
+    if(wMuteMedia&&wMuteHuman){wMuteHuman=false;document.getElementById('wMuteH').className='w-mute-btn';document.getElementById('wMuteHLabel').textContent='MUTE MIC';}
+    const btn=document.getElementById('wMuteM');
+    const lbl=document.getElementById('wMuteMLabel');
+    btn.className='w-mute-btn'+(wMuteMedia?' muted':'');
+    lbl.textContent=wMuteMedia?'✕ TV OFF':'MUTE TV';
+  }
+  wApplyMuteGain(null);
+}
+
+function wToggleUltra(){
+  wUltraMode=!wUltraMode;
+  const btn=document.getElementById('wUltra');
+  btn.className='w-ultra-btn'+(wUltraMode?' on':'');
+  btn.textContent=wUltraMode?'⚡ ULTRA ON':'⚡ ULTRA 1dB→33dB';
+  if(!wActive)return;
+  if(wUltraMode){
+    wPreGain.gain.value=45;wComp.threshold.value=-72;wComp.ratio.value=20;
+    wComp.attack.value=0.001;wComp.release.value=0.05;
+    wGain.gain.value=Math.max(wParams.voiceBoost,6);
+    wUpComp.ratio.value=0.15;wLimiter.threshold.value=-0.5;
+  } else {
+    wPreGain.gain.value=1;wComp.threshold.value=wParams.threshold;
+    wComp.ratio.value=12;wComp.attack.value=0.002;wComp.release.value=0.08;
+    wGain.gain.value=wParams.voiceBoost;
+    wUpComp.ratio.value=0.2;wLimiter.threshold.value=-1;
+  }
+}
+</script>
+</body>
+</html>
