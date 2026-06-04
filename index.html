@@ -1473,6 +1473,13 @@ function toggleUltra(){
   applyUltraChain();
 }
 
+
+function updatePulseRing(state){
+  const r = document.getElementById('pulseRing');
+  if(!r) return;
+  r.className = 'pulse-ring' + (state==='active' ? ' active' : state==='scanning' ? ' scanning' : '');
+}
+
 async function toggleEngage(){
   if(active){ stopAll(); return; }
   setError(null);
