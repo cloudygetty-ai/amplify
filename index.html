@@ -686,6 +686,34 @@ input[type=range]::-moz-range-thumb{
 /* ── FOOTER ── */
 .footer{position:relative;z-index:1;margin-top:18px;font-size:8px;color:var(--text-mute);letter-spacing:.22em;text-align:center}
 
+
+/* ── NS PANEL ── */
+.ns-panel{margin:14px 16px 0;padding:14px;border:1px solid rgba(129,140,248,.15);background:rgba(0,0,0,.3);border-radius:10px;position:relative;z-index:1}
+.ns-header{display:flex;align-items:center;justify-content:space-between;font-size:8px;letter-spacing:.3em;color:var(--text-mute);margin-bottom:12px}
+.ns-badge{font-size:9px;letter-spacing:.16em;padding:3px 10px;border-radius:10px;border:1px solid rgba(255,255,255,.06);color:var(--text-mute);font-family:'Outfit',sans-serif;font-weight:600;transition:all .3s}
+.ns-badge.calibrating{border-color:rgba(251,191,36,.4);color:var(--amber);background:rgba(251,191,36,.07);animation:ns-pulse 1s ease-in-out infinite}
+.ns-badge.active{border-color:rgba(129,140,248,.4);color:var(--indigo);background:rgba(129,140,248,.08)}
+.ns-badge.paused{border-color:rgba(255,255,255,.08);color:var(--text-mute)}
+@keyframes ns-pulse{0%,100%{opacity:.6}50%{opacity:1}}
+.ns-targets{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+.ns-target{padding:5px 12px;font-size:9px;letter-spacing:.18em;border-radius:16px;border:1px solid rgba(255,255,255,.06);background:rgba(0,0,0,.2);color:var(--text-mute);display:flex;align-items:center;gap:6px;transition:all .3s}
+.ns-target.detected{border-color:rgba(129,140,248,.4);color:var(--indigo);background:rgba(129,140,248,.1);box-shadow:0 0 10px rgba(129,140,248,.15)}
+.tgt-dot{width:5px;height:5px;border-radius:50%;background:var(--text-mute);transition:all .3s;flex-shrink:0}
+.ns-target.detected .tgt-dot{background:var(--indigo);box-shadow:0 0 6px rgba(129,140,248,.6)}
+.ns-controls{display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap}
+.ns-btn{padding:7px 13px;font-size:9px;letter-spacing:.15em;border-radius:20px;cursor:pointer;font-family:'Share Tech Mono',monospace;transition:all .2s;background:linear-gradient(180deg,rgba(255,255,255,.08) 0%,rgba(0,0,0,.15) 100%);border:1px solid rgba(255,255,255,.08);color:var(--text-mute);box-shadow:0 1px 0 rgba(255,255,255,.1) inset}
+.ns-btn:hover{color:var(--silver-dim);border-color:rgba(255,255,255,.15)}
+.ns-btn.active{background:linear-gradient(180deg,rgba(129,140,248,.35) 0%,rgba(99,102,241,.2) 100%);border-color:rgba(129,140,248,.45);color:var(--indigo);box-shadow:0 1px 0 rgba(255,255,255,.2) inset,0 0 16px rgba(129,140,248,.2)}
+.ns-btn.calibrating{background:linear-gradient(180deg,rgba(251,191,36,.3) 0%,rgba(251,191,36,.1) 100%);border-color:rgba(251,191,36,.4);color:var(--amber);animation:ns-pulse 1s ease-in-out infinite}
+.ns-cal-btn{padding:7px 13px;font-size:9px;letter-spacing:.15em;border-radius:20px;cursor:pointer;font-family:'Share Tech Mono',monospace;transition:all .2s;background:linear-gradient(180deg,rgba(251,191,36,.2) 0%,rgba(251,191,36,.08) 100%);border:1px solid rgba(251,191,36,.3);color:var(--amber);box-shadow:0 1px 0 rgba(255,255,255,.1) inset}
+.ns-cal-btn:hover{background:linear-gradient(180deg,rgba(251,191,36,.35) 0%,rgba(251,191,36,.15) 100%)}
+.ns-reset-btn{padding:7px 11px;font-size:12px;border-radius:20px;cursor:pointer;background:rgba(0,0,0,.2);border:1px solid rgba(255,255,255,.06);color:var(--text-mute);transition:all .15s}
+.ns-reset-btn:hover{color:var(--silver-dim)}
+.ns-slider-row{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.ns-slider-label{font-size:8px;letter-spacing:.2em;color:var(--text-mute);white-space:nowrap;min-width:50px}
+.ns-slider-val{font-size:9px;color:var(--indigo);letter-spacing:.1em;min-width:36px;font-family:'Outfit',sans-serif;font-weight:600}
+.ns-instructions{font-size:8px;letter-spacing:.1em;line-height:1.8;color:var(--text-mute);padding:8px 10px;background:rgba(0,0,0,.2);border-radius:6px;border:1px solid rgba(255,255,255,.04);margin-top:8px}
+.ns-instructions b{color:var(--indigo)}
 /* ══════════════════════════════════════════════
    OVERLAY MODE
 ══════════════════════════════════════════════ */
@@ -883,11 +911,11 @@ body.overlay-mode .panel{background:rgba(14,10,30,.25)!important;backdrop-filter
 
   <div class="chain" id="chainDisplay">
     <div class="chain-node" id="cn0">PRE-EMPH</div><div class="chain-arrow">→</div>
-    <div class="chain-node" id="cn1">HP 80Hz</div><div class="chain-arrow">→</div>
-    <div class="chain-node" id="cn2">LP 3.5kHz</div><div class="chain-arrow">→</div>
-    <div class="chain-node" id="cn3">PRESENCE +3dB</div><div class="chain-arrow">→</div>
-    <div class="chain-node" id="cn4">COMPANDER</div><div class="chain-arrow">→</div>
-    <div class="chain-node" id="cn5">GAIN ×3.5</div><div class="chain-arrow">→</div>
+    <div class="chain-node" id="cn1">HP</div><div class="chain-arrow">→</div>
+    <div class="chain-node" id="cn2">MUD CUT</div><div class="chain-arrow">→</div>
+    <div class="chain-node" id="cn3">PRESENCE ×2</div><div class="chain-arrow">→</div>
+    <div class="chain-node" id="cn4">AIR +3dB</div><div class="chain-arrow">→</div>
+    <div class="chain-node" id="cn5">COMP</div><div class="chain-arrow">→</div>
     <div class="chain-node" id="cn6">OUT</div>
   </div>
 
@@ -933,22 +961,25 @@ body.overlay-mode .panel{background:rgba(14,10,30,.25)!important;backdrop-filter
 // PRESETS — tuned for human speech formant bands
 // ═══════════════════════════════════════════════════════════════
 const PRESETS = {
-  "Low Voice":  { voiceBoost:3.5, threshold:-45, lowCut:80,  highCut:3500, presenceGain:3, presenceFreq:2500 },
-  "Whisper":    { voiceBoost:5.0, threshold:-55, lowCut:100, highCut:2800, presenceGain:5, presenceFreq:2000 },
-  "Conference": { voiceBoost:2.5, threshold:-35, lowCut:200, highCut:4000, presenceGain:2, presenceFreq:3000 },
-  "Studio":     { voiceBoost:1.5, threshold:-25, lowCut:80,  highCut:8000, presenceGain:1, presenceFreq:4000 },
-  "Distance":   { voiceBoost:6.0, threshold:-58, lowCut:120, highCut:3200, presenceGain:6, presenceFreq:2200 },
-};
-
+  // Low Voice: deep gate + strong presence — clearest output for quiet talkers
+  "Low Voice":  { voiceBoost:8,  threshold:-62, lowCut:80,  highCut:4500, presenceGain:8,  presenceFreq:3000 },
+  // Whisper: extreme gain + presence — catches barely audible speech
+  "Whisper":    { voiceBoost:14, threshold:-78, lowCut:150, highCut:3500, presenceGain:10, presenceFreq:2800 },
+  // Across Room: wide EQ, heavy comp — for far-field voice capture
+  "Across Room":{ voiceBoost:12, threshold:-70, lowCut:100, highCut:5000, presenceGain:9,  presenceFreq:3200 },
+  // Conference: balanced, multiple speakers at normal talking volume
+  "Conference": { voiceBoost:5,  threshold:-45, lowCut:200, highCut:6000, presenceGain:5,  presenceFreq:3000 },
+  // Studio: minimal, transparent — close mic, loud source
+  "Studio":     { voiceBoost:2,  threshold:-28, lowCut:80,  highCut:8000, presenceGain:2,  presenceFreq:4000 },
+}
 const SLIDERS = [
-  { key:"voiceBoost",   label:"VOICE BOOST",     min:0.5, max:10,    step:0.1,  fmt:v=>`${v.toFixed(1)}×` },
-  { key:"threshold",    label:"GATE THRESHOLD",  min:-80, max:-10,   step:1,    fmt:v=>`${v}dB` },
-  { key:"lowCut",       label:"LOW CUT (HP)",    min:60,  max:500,   step:10,   fmt:v=>`${v}Hz` },
-  { key:"highCut",      label:"HIGH CUT (LP)",   min:1000,max:12000, step:100,  fmt:v=>v>=1000?`${(v/1000).toFixed(1)}kHz`:`${v}Hz` },
-  { key:"presenceGain", label:"PRESENCE BOOST",  min:0,   max:12,    step:0.5,  fmt:v=>`+${v}dB` },
-  { key:"presenceFreq", label:"PRESENCE FREQ",   min:800, max:5000,  step:100,  fmt:v=>v>=1000?`${(v/1000).toFixed(1)}kHz`:`${v}Hz` },
-];
-
+  { key:"voiceBoost",   label:"OUTPUT GAIN",    min:1,   max:20,    step:0.5,  fmt:v=>`×${v.toFixed(1)}` },
+  { key:"threshold",    label:"GATE THRESHOLD", min:-90, max:-10,   step:1,    fmt:v=>`${v}dB` },
+  { key:"lowCut",       label:"LOW CUT",        min:60,  max:500,   step:10,   fmt:v=>`${v}Hz` },
+  { key:"highCut",      label:"HIGH CUT",       min:1000,max:12000, step:100,  fmt:v=>v>=1000?`${(v/1000).toFixed(1)}kHz`:`${v}Hz` },
+  { key:"presenceGain", label:"PRESENCE",       min:0,   max:15,    step:0.5,  fmt:v=>`+${v}dB` },
+  { key:"presenceFreq", label:"PRES FREQ",      min:800, max:5000,  step:100,  fmt:v=>v>=1000?`${(v/1000).toFixed(1)}kHz`:`${v}Hz` },
+]
 // ═══════════════════════════════════════════════════════════════
 // STATE
 // ═══════════════════════════════════════════════════════════════
@@ -1048,13 +1079,27 @@ function updatePct(el){
 }
 
 function applyParamsToGraph(){
-  if(gain)    gain.gain.value=params.voiceBoost;
-  if(comp)    comp.threshold.value=params.threshold;
-  if(hp)      hp.frequency.value=params.lowCut;
-  if(lp)      lp.frequency.value=params.highCut;
-  if(presence){ presence.gain.value=params.presenceGain; presence.frequency.value=params.presenceFreq; }
+  if(comp){
+    comp.threshold.value = params.threshold;
+    comp.knee.value      = 20;
+    comp.ratio.value     = 12;
+    comp.attack.value    = 0.002;
+    comp.release.value   = 0.15;
+  }
+  if(gain)    gain.gain.value = params.voiceBoost;
+  if(hp)      hp.frequency.value = params.lowCut;
+  if(lp)      lp.frequency.value = params.highCut;
+  if(presence){
+    presence.gain.value      = params.presenceGain * 0.6;
+    presence.frequency.value = 1800;
+  }
+  if(limiter) limiter.threshold.value = -1.5;
+  const eq = window._eq;
+  if(eq){
+    eq.presence2.gain.value      = params.presenceGain * 0.8;
+    eq.presence2.frequency.value = params.presenceFreq;
+  }
 }
-
 function updateChainDisplay(){
   document.getElementById('cn1').textContent=`HP ${params.lowCut}Hz`;
   document.getElementById('cn2').textContent=`LP ${params.highCut>=1000?(params.highCut/1000).toFixed(1)+'kHz':params.highCut+'Hz'}`;
@@ -1326,7 +1371,7 @@ function updateClassifierUI(cls){
     v.className='cls-verdict v-human';
     badge.className='human';
     const _bh=document.getElementById('srcBadgeText');if(_bh)_bh.textContent='HUMAN VOICE';
-    document.getElementById('dot').className='dot active-voice';
+    updatePulseRing('active');
     document.getElementById('voiceLock').textContent='▸ VOICE LOCKED';
     document.getElementById('voiceLock').className='voice-lock locked';
   } else if(cls.verdict==='MEDIA'){
@@ -1334,7 +1379,7 @@ function updateClassifierUI(cls){
     v.className='cls-verdict v-media';
     badge.className='media';
     const _bm=document.getElementById('srcBadgeText');if(_bm)_bm.textContent='MEDIA / TV';
-    document.getElementById('dot').className='dot active-scan';
+    updatePulseRing('scanning');
     document.getElementById('voiceLock').textContent='▸ MEDIA SIGNAL';
     document.getElementById('voiceLock').className='voice-lock';
   } else {
@@ -1342,7 +1387,7 @@ function updateClassifierUI(cls){
     v.className='cls-verdict v-mixed';
     badge.className='silence';
     const _bx=document.getElementById('srcBadgeText');if(_bx)_bx.textContent='MIXED';
-    document.getElementById('dot').className='dot active-scan';
+    updatePulseRing('scanning');
   }
 }
 
@@ -1387,6 +1432,7 @@ function tick(){
     const cls = classifySource(inData, timeData, sampleRate);
     updateClassifierUI(cls);
     applyMuteGain(cls.verdict);
+    detectMechanicalNoise(inData, sampleRate);
   } else if(inAvg <= 0.005){
     document.getElementById('srcBadge').className='silence';
     document.getElementById('srcBadge').textContent='◈ SILENCE';
@@ -1434,31 +1480,34 @@ function tick(){
 // ENGAGE / DISENGAGE
 // ═══════════════════════════════════════════════════════════════
 function applyUltraChain(){
-  if(!preGain || !comp || !gain || !upComp || !limiter) return;
+  if(!comp || !gain || !limiter) return;
   if(ultraMode){
-    // 1dB input (~0.112 amplitude) → 33dB perceived output
-    // 33dB - 1dB = 32dB gain needed = ×39.8 linear
-    // Split: preGain ×45 (headroom) + comp brings it into range + limiter clamps
-    preGain.gain.value = 45;
-    comp.threshold.value = -72;   // gate opens at nearly silent input
-    comp.ratio.value = 20;        // heavy compression to normalize levels
-    comp.attack.value = 0.001;
-    comp.release.value = 0.05;
-    gain.gain.value = Math.max(params.voiceBoost, 6); // minimum ×6 in ultra
-    upComp.ratio.value = 0.15;    // strong upward expansion
+    comp.threshold.value = -80;
+    comp.knee.value      = 10;
+    comp.ratio.value     = 20;
+    comp.attack.value    = 0.002;
+    comp.release.value   = 0.1;
+    gain.gain.value      = 20;
     limiter.threshold.value = -0.5;
+    // ULTRA: boost presence + air even more for extreme clarity
+    if(window._eq){
+      window._eq.airShelf.gain.value    = 6;  // +6dB air
+      window._eq.presence2.gain.value  = params.presenceGain * 1.2;
+    }
   } else {
-    preGain.gain.value = 1.0;
     comp.threshold.value = params.threshold;
-    comp.ratio.value = 12;
-    comp.attack.value = 0.002;
-    comp.release.value = 0.08;
-    gain.gain.value = params.voiceBoost;
-    upComp.ratio.value = 0.2;
-    limiter.threshold.value = -1.0;
+    comp.knee.value      = 20;
+    comp.ratio.value     = 12;
+    comp.attack.value    = 0.002;
+    comp.release.value   = 0.15;
+    gain.gain.value      = params.voiceBoost;
+    limiter.threshold.value = -1.5;
+    if(window._eq){
+      window._eq.airShelf.gain.value   = 3;
+      window._eq.presence2.gain.value = params.presenceGain * 0.8;
+    }
   }
 }
-
 function toggleUltra(){
   ultraMode = !ultraMode;
   const btn = document.getElementById('ultraBtn');
@@ -1492,225 +1541,214 @@ async function toggleEngage(){
     ctx = new (window.AudioContext||window.webkitAudioContext)({ sampleRate:44100 });
     const source = ctx.createMediaStreamSource(stream);
 
-    // ── Analyser: input (pre-processing) ──
+    // ═══════════════════════════════════════════════════════
+    // DSP ENGINE v6 — CLARITY REBUILD
+    // Chain: noiseNode → HP → notch(hum) → lowShelf → midScoop →
+    //        presence1 → presence2 → airShelf → deEss → LP →
+    //        comp → gain → limiter
+    //
+    // CLARITY PRINCIPLES:
+    // 1. Cut mud (200-500Hz boxiness) before boosting highs
+    // 2. Two presence bands: body(1-2.5kHz) + clarity(3-5kHz)
+    // 3. Air shelf (+10kHz) restores "openness" lost in LP filter
+    // 4. De-esser: frequency-specific compressor on 6-9kHz sibilants
+    // 5. Attack 2ms: catches consonant transients (p,t,k,s,f)
+    // 6. Comp knee 20dB: transparent, no pumping
+    // ═══════════════════════════════════════════════════════
+
+    // Input analysers
     inAn = ctx.createAnalyser();
     inAn.fftSize = 256;
-    inAn.smoothingTimeConstant = .75;
-
-    // ── Time domain analyser (for ZCR / classifier) ──
+    inAn.smoothingTimeConstant = 0.8;
     timeAn = ctx.createAnalyser();
     timeAn.fftSize = 256;
     timeAn.smoothingTimeConstant = 0;
 
-    // ── DSP Chain ──
-    // HP (removes rumble + sub)
+    // ── 1. HIGH-PASS @ lowCut Hz ──
+    // Removes rumble, handling noise, mic proximity effect
+    // Q=0.7: Butterworth — maximally flat, no resonance peak
     hp = ctx.createBiquadFilter();
     hp.type = 'highpass';
     hp.frequency.value = params.lowCut;
     hp.Q.value = 0.7;
 
-    // PRESENCE boost (2–5kHz band — consonants, sibilance, speech clarity)
+    // ── 2. HUM NOTCH (50/60Hz electrical interference) ──
+    const humNotch = ctx.createBiquadFilter();
+    humNotch.type = 'notch';
+    humNotch.frequency.value = 60; // 60Hz US power hum (50Hz EU)
+    humNotch.Q.value = 30;         // very narrow — only kills the tone
+
+    // ── 3. LOW-MID SHELF CUT (mud reduction) ──
+    // 200-500Hz "boxiness" makes voices sound like talking into a can
+    // Cut -4dB here and everything above sounds clearer without touching it
+    const lowShelf = ctx.createBiquadFilter();
+    lowShelf.type = 'lowshelf';
+    lowShelf.frequency.value = 350;
+    lowShelf.gain.value = -4;  // subtle cut — removes mud, keeps warmth
+
+    // ── 4. MID SCOOP (removes honkiness) ──
+    // 600-900Hz "nasal/honky" resonance — present in most room mics
+    // Cutting here makes voice sound more natural and present
+    const midScoop = ctx.createBiquadFilter();
+    midScoop.type = 'peaking';
+    midScoop.frequency.value = 700;
+    midScoop.Q.value = 1.5;
+    midScoop.gain.value = -3;  // gentle dip, removes congestion
+
+    // ── 5. PRESENCE BAND 1 — vowel clarity (1-2.5kHz) ──
+    // Boosts vowel fundamentals — makes voice "forward" and intelligible
+    // This is the "punch" of a voice — cuts through background
     presence = ctx.createBiquadFilter();
     presence.type = 'peaking';
-    presence.frequency.value = params.presenceFreq;
-    presence.Q.value = 1.2;
-    presence.gain.value = params.presenceGain;
+    presence.frequency.value = 1800;
+    presence.Q.value = 0.9;
+    presence.gain.value = params.presenceGain * 0.6; // 60% of total presence here
 
-    // LP (removes hiss, air, RF)
+    // ── 6. PRESENCE BAND 2 — consonant clarity (3-5kHz) ──
+    // Consonants live here: s, t, k, p, f — these define intelligibility
+    // If voice is muddy/unclear, THIS is the band to boost
+    const presence2 = ctx.createBiquadFilter();
+    presence2.type = 'peaking';
+    presence2.frequency.value = params.presenceFreq; // 2500-4000Hz
+    presence2.Q.value = 1.0;
+    presence2.gain.value = params.presenceGain * 0.8; // 80% of total here
+
+    // ── 7. AIR SHELF (8-12kHz openness) ──
+    // High-frequency "air" makes voice sound open, airy, not boxed-in
+    // Small boost: restores openness that LP filter and room absorb
+    const airShelf = ctx.createBiquadFilter();
+    airShelf.type = 'highshelf';
+    airShelf.frequency.value = 8000;
+    airShelf.gain.value = 3;  // gentle lift — "airy" not "hissy"
+
+    // ── 8. DE-ESSER (tames harsh sibilants) ──
+    // At high gain, S/SH sounds become painfully sharp (6-9kHz)
+    // De-essing: compress ONLY this band, leave rest untouched
+    // Implemented as a gentle lowshelf on the very top
+    const deEss = ctx.createBiquadFilter();
+    deEss.type = 'peaking';
+    deEss.frequency.value = 7500;
+    deEss.Q.value = 2.0;
+    deEss.gain.value = -4;  // tame harshness before it hits comp
+
+    // ── 9. LOW-PASS @ highCut Hz ──
     lp = ctx.createBiquadFilter();
     lp.type = 'lowpass';
     lp.frequency.value = params.highCut;
     lp.Q.value = 0.7;
 
-    // COMPANDER (compress soft, expand loud → brings up low voice)
+    // ── 10. COMPRESSOR ──
+    // Wide knee (20dB) = completely transparent — listener never hears it working
+    // Attack 2ms: catches consonant transients for crisp intelligibility
+    // Release 150ms: natural — longer than a syllable, shorter than a word
     comp = ctx.createDynamicsCompressor();
     comp.threshold.value = params.threshold;
-    comp.knee.value = 12;
-    comp.ratio.value = 12;
-    comp.attack.value = 0.002;
-    comp.release.value = 0.08;
+    comp.knee.value      = 20;    // transparent — no pumping artifacts
+    comp.ratio.value     = 12;    // strong leveling: quiet≈loud
+    comp.attack.value    = 0.002; // 2ms — consonants intact
+    comp.release.value   = 0.15;  // 150ms — natural continuity
 
-    // GAIN
+    // ── 11. OUTPUT GAIN ──
     gain = ctx.createGain();
     gain.gain.value = params.voiceBoost;
 
-    // MUTE GATE — controlled by classifier verdict + mute toggles
+    // ── 12. LIMITER ──
+    limiter = ctx.createDynamicsCompressor();
+    limiter.threshold.value = -1.5;
+    limiter.knee.value      = 0;
+    limiter.ratio.value     = 20;
+    limiter.attack.value    = 0.001;
+    limiter.release.value   = 0.05;
+
+    // ── 13. MUTE GATE ──
     muteGain = ctx.createGain();
     muteGain.gain.value = 1.0;
 
-    // ── Output Analyser ──
+    // ── 14. OUTPUT ANALYSER ──
     outAn = ctx.createAnalyser();
     outAn.fftSize = 256;
-    outAn.smoothingTimeConstant = .75;
+    outAn.smoothingTimeConstant = 0.8;
 
-    // ── Pre-gain stage (ultra mode: ×45 to lift 1dB → ~33dB perceived) ──
-    preGain = ctx.createGain();
-    preGain.gain.value = 1.0; // set by ultraMode
-
-    // ── Upward expander (makes quiet louder, leaves loud alone) ──
-    upComp = ctx.createDynamicsCompressor();
-    upComp.threshold.value = -80;
-    upComp.knee.value = 30;
-    upComp.ratio.value = 0.2;  // ratio < 1 = upward expansion
-    upComp.attack.value = 0.001;
-    upComp.release.value = 0.05;
-
-    // ── Brick-wall limiter (prevents clipping after massive gain) ──
-    limiter = ctx.createDynamicsCompressor();
-    limiter.threshold.value = -1.0;
-    limiter.knee.value = 0;
-    limiter.ratio.value = 20;
-    limiter.attack.value = 0.001;
-    limiter.release.value = 0.1;
-
-    // ── NOISE SUPPRESSION NODE (spectral subtraction) ──
-    // bufferSize 1024 = ~23ms at 44100Hz — good latency/accuracy tradeoff
-    // ── NOISE SUPPRESSION ENGINE v2 — fast band-gain approach ──
-    // Uses AnalyserNode for FFT (C++ side, zero JS cost)
-    // ScriptProcessor applies per-sample smoothed gain only (O(N), no inner loops)
-
-    const NS_BANDS = 32;          // sub-bands for profile learning
-    const NS_BUF   = 512;         // ScriptProcessor buffer — smaller = lower latency
-    const NS_CAL_FRAMES = 50;     // ~580ms calibration window
-
-    // Noise analyser — separate from inAn, reads raw pre-EQ signal
+    // ── NOISE SUPPRESSION NODE ──
+    const NS_BANDS = 32, NS_BUF = 512, NS_CAL_FRAMES = 50;
     noiseNode = ctx.createScriptProcessor(NS_BUF, 1, 1);
-
-    // Noise profile: learned per-band energy floor
-    let nsProfile    = new Float32Array(NS_BANDS);  // learned noise per band
-    let nsCalFrames  = [];                           // calibration accumulator
-    let nsGainSmooth = new Float32Array(NS_BANDS).fill(1.0); // smoothed gains
-    let nsOutGain    = 1.0;   // current frame output gain scalar
-    let nsOutSmooth  = 1.0;   // smoothed output gain (prevent clicks)
-
-    // Fan detection state
-    let nsFlatHistory  = [];  // spectral flatness history
-    let nsSilHistory   = [];  // silence detection history
-    let nsCrestHistory = [];  // crest factor history
-    let nsFanScore     = 0;   // 0–1, smoothed
-
+    let nsProfile=new Float32Array(NS_BANDS), nsCalFrames=[];
+    let nsGainSmooth=new Float32Array(NS_BANDS).fill(1.0), nsOutSmooth=1.0;
+    let nsFlatHist=[], nsCrestHist=[], nsSilHist=[], nsFanSc=0;
     noiseNode.onaudioprocess = function(e){
-      const inBuf  = e.inputBuffer.getChannelData(0);
-      const outBuf = e.outputBuffer.getChannelData(0);
-
-      // ── Compute per-band energy (O(N) — no DFT in JS) ──
-      // Split buffer into NS_BANDS chunks, compute RMS per chunk
-      // This is a sub-band filterbank approximation — fast and effective
-      // for broadband stationary noise like fans/AC
-      const chunkSize = Math.floor(NS_BUF / NS_BANDS);
-      const bandEnergy = new Float32Array(NS_BANDS);
-      let totalEnergy = 0, peakSample = 0;
-
-      for(let b = 0; b < NS_BANDS; b++){
-        let sum = 0;
-        const start = b * chunkSize;
-        for(let i = start; i < start + chunkSize && i < NS_BUF; i++){
-          sum += inBuf[i] * inBuf[i];
-          const abs = Math.abs(inBuf[i]);
-          if(abs > peakSample) peakSample = abs;
-        }
-        bandEnergy[b] = Math.sqrt(sum / chunkSize);
-        totalEnergy += bandEnergy[b];
-      }
-
-      const rms = Math.sqrt(inBuf.reduce((a,s)=>a+s*s,0) / NS_BUF);
-
-      // ── Fan detection metrics ──
-      // 1. Spectral flatness: fan is flat across bands; voice has peaks
-      const meanBand = totalEnergy / NS_BANDS;
-      let geoSum = 0, validBands = 0;
+      const inp=e.inputBuffer.getChannelData(0), out=e.outputBuffer.getChannelData(0);
+      const chunk=Math.floor(NS_BUF/NS_BANDS), bandE=new Float32Array(NS_BANDS);
+      let total=0, peak=0;
       for(let b=0;b<NS_BANDS;b++){
-        if(bandEnergy[b]>1e-8){geoSum+=Math.log(bandEnergy[b]);validBands++;}
+        let s=0, st=b*chunk;
+        for(let i=st;i<st+chunk&&i<NS_BUF;i++){s+=inp[i]*inp[i];const a=Math.abs(inp[i]);if(a>peak)peak=a;}
+        bandE[b]=Math.sqrt(s/chunk); total+=bandE[b];
       }
-      const sfm = validBands > 0
-        ? Math.exp(geoSum/validBands) / (meanBand + 1e-9)
-        : 0; // near 1 = flat (fan), near 0 = tonal (voice)
-
-      // 2. Crest factor: fan has low crest (steady), voice has high crest (bursts)
-      const crest = rms > 1e-6 ? peakSample / rms : 0;
-
-      // 3. Signal present check
-      const hasSignal = rms > 0.003;
-
-      nsFlatHistory.push(sfm);   if(nsFlatHistory.length>60) nsFlatHistory.shift();
-      nsCrestHistory.push(crest); if(nsCrestHistory.length>60) nsCrestHistory.shift();
-      nsSilHistory.push(hasSignal?1:0); if(nsSilHistory.length>60) nsSilHistory.shift();
-
-      const avgFlat  = nsFlatHistory.reduce((a,b)=>a+b,0)/nsFlatHistory.length;
-      const avgCrest = nsCrestHistory.reduce((a,b)=>a+b,0)/nsCrestHistory.length;
-      const contRate = nsSilHistory.reduce((a,b)=>a+b,0)/nsSilHistory.length;
-
-      // Fan score: flat spectrum + low crest + continuous signal = fan/AC
-      // High sfm = flat; low crest (< 3) = steady; contRate near 1 = no pauses
-      const flatScore  = Math.min(1, avgFlat * 2.5);
-      const crestScore = avgCrest < 4 ? 1 - avgCrest/4 : 0;
-      const contScore  = Math.max(0, contRate - 0.7) / 0.3;
-      const rawFanScore = (flatScore*0.5 + crestScore*0.3 + contScore*0.2);
-      nsFanScore = nsFanScore * 0.92 + rawFanScore * 0.08; // slow smooth
-
-      // ── CALIBRATION ──
-      if(noiseCalibrating && hasSignal){
-        nsCalFrames.push(new Float32Array(bandEnergy));
-        if(nsCalFrames.length >= NS_CAL_FRAMES){
-          // Average calibration frames → noise profile
+      const rms=Math.sqrt(inp.reduce((a,v)=>a+v*v,0)/NS_BUF);
+      const mean=total/NS_BANDS; let gs=0,vb=0;
+      for(let b=0;b<NS_BANDS;b++) if(bandE[b]>1e-8){gs+=Math.log(bandE[b]);vb++;}
+      const sfm=vb>0?Math.exp(gs/vb)/(mean+1e-9):0;
+      const crest=rms>1e-6?peak/rms:0, hasSig=rms>0.003;
+      nsFlatHist.push(sfm); if(nsFlatHist.length>60)nsFlatHist.shift();
+      nsCrestHist.push(crest); if(nsCrestHist.length>60)nsCrestHist.shift();
+      nsSilHist.push(hasSig?1:0); if(nsSilHist.length>60)nsSilHist.shift();
+      const af=nsFlatHist.reduce((a,b)=>a+b,0)/nsFlatHist.length;
+      const ac=nsCrestHist.reduce((a,b)=>a+b,0)/nsCrestHist.length;
+      const cr=nsSilHist.reduce((a,b)=>a+b,0)/nsSilHist.length;
+      nsFanSc=nsFanSc*0.92+((Math.min(1,af*2.5)*0.5+(ac<4?1-ac/4:0)*0.3+Math.max(0,cr-0.7)/0.3*0.2))*0.08;
+      window._nsFanScore=nsFanSc;
+      if(noiseCalibrating&&hasSig){
+        nsCalFrames.push(new Float32Array(bandE));
+        if(nsCalFrames.length>=NS_CAL_FRAMES){
           nsProfile.fill(0);
           for(const f of nsCalFrames) for(let b=0;b<NS_BANDS;b++) nsProfile[b]+=f[b];
-          for(let b=0;b<NS_BANDS;b++) nsProfile[b] = (nsProfile[b]/nsCalFrames.length) * noiseAlpha;
-          nsCalFrames = [];
-          noiseCalibrating = false;
-          noiseSuppressOn  = true;
-          updateNoiseUI('ready');
+          for(let b=0;b<NS_BANDS;b++) nsProfile[b]=(nsProfile[b]/nsCalFrames.length)*noiseAlpha;
+          nsCalFrames=[]; noiseCalibrating=false; noiseSuppressOn=true; updateNoiseUI('ready');
         }
       }
-
-      // ── SUPPRESSION ──
-      if(!noiseSuppressOn || !hasSignal){
-        outBuf.set(inBuf);
-        nsOutSmooth = nsOutSmooth * 0.95 + 1.0 * 0.05;
-        return;
-      }
-
-      // Per-band Wiener gain
-      let frameGain = 0;
+      if(!noiseSuppressOn||!hasSig){out.set(inp);nsOutSmooth=nsOutSmooth*0.95+0.05;return;}
+      let fg=0;
       for(let b=0;b<NS_BANDS;b++){
-        const sig   = bandEnergy[b];
-        const noise = nsProfile[b];
-        // Wiener gain: G = max(floor, 1 - noise/sig)
-        const g = sig > 1e-8 ? Math.max(noiseFloor, 1 - noise/sig) : noiseFloor;
-        // Non-linear: harder suppression in flat-spectrum bands
-        const gFinal = Math.pow(g, 1.2 + nsFanScore * 0.8);
-        nsGainSmooth[b] = nsGainSmooth[b] * 0.85 + gFinal * 0.15;
-        frameGain += nsGainSmooth[b];
+        const g=bandE[b]>1e-8?Math.max(noiseFloor,1-nsProfile[b]/bandE[b]):noiseFloor;
+        nsGainSmooth[b]=nsGainSmooth[b]*0.85+Math.pow(g,1.2+nsFanSc*0.8)*0.15;
+        fg+=nsGainSmooth[b];
       }
-      frameGain /= NS_BANDS;
-
-      // Smooth output gain — prevent clicks/zipper noise
-      nsOutSmooth = nsOutSmooth * 0.90 + frameGain * 0.10;
-
-      // Apply scalar gain to all samples in buffer
-      for(let i=0;i<NS_BUF;i++){
-        outBuf[i] = inBuf[i] * nsOutSmooth;
-      }
+      nsOutSmooth=nsOutSmooth*0.9+(fg/NS_BANDS)*0.1;
+      window._nsOutSmooth=nsOutSmooth;
+      for(let i=0;i<NS_BUF;i++) out[i]=inp[i]*nsOutSmooth;
     };
 
-    // ── Wire graph ──
+    // ══════════════════════════════════════════════════════
+    // WIRE GRAPH v6
+    // source → noise → HP → humNotch → lowShelf → midScoop →
+    //          presence → presence2 → airShelf → deEss → LP →
+    //          comp → gain → limiter → muteGain → outAn → out
+    // ══════════════════════════════════════════════════════
     source.connect(inAn);
     source.connect(timeAn);
-
-    // Signal chain: preGain → noiseNode → HP → presence → LP → comp → gain → upComp → limiter → muteGain → out
-    source.connect(preGain);
-    preGain.connect(noiseNode);
+    source.connect(noiseNode);
     noiseNode.connect(hp);
-    hp.connect(presence);
-    presence.connect(lp);
+    hp.connect(humNotch);
+    humNotch.connect(lowShelf);
+    lowShelf.connect(midScoop);
+    midScoop.connect(presence);
+    presence.connect(presence2);
+    presence2.connect(airShelf);
+    airShelf.connect(deEss);
+    deEss.connect(lp);
     lp.connect(comp);
     comp.connect(gain);
-    gain.connect(upComp);
-    upComp.connect(limiter);
+    gain.connect(limiter);
     limiter.connect(muteGain);
     muteGain.connect(outAn);
     outAn.connect(ctx.destination);
 
+    // Store new nodes for applyParamsToGraph access
+    window._eq = { humNotch, lowShelf, midScoop, presence2, airShelf, deEss };
+
+    // Legacy refs (for applyUltraChain compat)
+    preGain = { gain: { value: 1 } }; // dummy — no longer in chain
+    upComp  = { gain: { value: 1 } }; // dummy
     if(ultraMode) applyUltraChain();
 
     raf = requestAnimationFrame(tick);
@@ -1749,7 +1787,7 @@ function stopAll(){
   document.getElementById('vuOut').style.height='0%';
   document.getElementById('voiceLock').textContent='▸ SCANNING';
   document.getElementById('voiceLock').className='voice-lock';
-  document.getElementById('dot').className='dot';
+  updatePulseRing('');
   document.getElementById('srcBadge').className='silence';
   document.getElementById('srcBadge').textContent='◈ AWAITING SIGNAL';
   document.getElementById('clsVerdict').textContent='AWAITING SIGNAL';
@@ -2088,21 +2126,6 @@ function nsSetStrength(v){
   }
 }
 
-function updateNoiseUI(state){
-  const el = document.getElementById('noiseStatus');
-  const calBtn = document.getElementById('nsBtnCal');
-  if(state === 'calibrating'){
-    el.textContent = 'CALIBRATING…'; el.className = 'noise-status calibrating';
-  } else if(state === 'ready' || state === 'active'){
-    el.textContent = 'ACTIVE'; el.className = 'noise-status active';
-    calBtn.style.display = 'block';
-    const toggleBtn = document.getElementById('nsBtnToggle');
-    toggleBtn.textContent = '◈ ENABLED'; toggleBtn.className = 'noise-btn active';
-    noiseSuppressOn = true;
-  } else {
-    el.textContent = 'OFF'; el.className = 'noise-status off';
-  }
-}
 
 
 // ═══════════════════════════════════════════════════════════════
