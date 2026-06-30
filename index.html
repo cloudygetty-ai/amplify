@@ -753,7 +753,77 @@ body.overlay-mode .panel{background:rgba(14,10,30,.25)!important;backdrop-filter
     <button class="tb-btn" id="overlayBtn" onclick="toggleOverlay()">⊞ OVERLAY</button>
     <button class="tb-btn" id="ultraBtn" onclick="toggleUltra()">⚡ ULTRA</button>
     <button class="tb-btn" id="ccBtn" onclick="toggleCC()">◉ CC</button>
+    <button class="tb-btn" id="videoBtn" onclick="openVideoModal()">🎬 VIDEO</button>
     <button class="tb-btn" id="engageBtnTop" onclick="toggleEngage()">▶ ENGAGE</button>
+  </div>
+</div>
+
+<!-- VIDEO VOICE EXTRACTOR MODAL -->
+<div id="videoModalOverlay" style="display:none;position:fixed;inset:0;z-index:999;background:rgba(7,5,15,.88);backdrop-filter:blur(6px);align-items:flex-start;justify-content:center;overflow-y:auto;padding:40px 16px">
+  <div id="videoModal" style="width:100%;max-width:640px;background:linear-gradient(145deg,rgba(22,15,46,.97),rgba(15,11,30,.99));border:1px solid var(--glass-border, rgba(255,255,255,.1));border-radius:6px;box-shadow:0 30px 80px rgba(0,0,0,.7),0 0 60px rgba(168,85,247,.08);overflow:hidden;font-family:'Share Tech Mono',monospace;color:#e6e6fa">
+
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid rgba(255,255,255,.08);background:rgba(0,0,0,.25)">
+      <div>
+        <div style="font-size:9px;letter-spacing:.3em;color:#a855f7;opacity:.8">VIDEO VOICE EXTRACTOR</div>
+        <div style="font-size:15px;font-weight:700;font-family:'Orbitron',sans-serif;color:#fff;margin-top:2px">ELIMINATE NOISE · AMPLIFY VOICE</div>
+      </div>
+      <button onclick="closeVideoModal()" style="width:28px;height:28px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.04);color:#c084fc;cursor:pointer;font-size:14px;border-radius:3px">✕</button>
+    </div>
+
+    <div style="padding:18px">
+      <div style="font-size:9px;letter-spacing:.15em;color:#9090b8;margin-bottom:10px;line-height:1.6">
+        UPLOAD ANY VIDEO (UP TO 2GB). WE EXTRACT THE AUDIO, AUTO-DETECT THE NOISE FLOOR, GATE OUT EVERYTHING THAT ISN'T HUMAN VOICE, AMPLIFY WHAT REMAINS, AND REMUX IT BACK INTO YOUR VIDEO — FULLY IN-BROWSER, NOTHING UPLOADED TO ANY SERVER.
+      </div>
+
+      <div id="vidDropzone" style="border:1.5px dashed rgba(168,85,247,.35);background:rgba(168,85,247,.04);border-radius:4px;padding:24px;text-align:center;margin-bottom:14px;cursor:pointer;transition:all .2s" onclick="document.getElementById('vidFile').click()">
+        <input type="file" id="vidFile" accept="video/*" style="display:none" onchange="onVidFileSelected(this)"/>
+        <div style="font-size:24px;margin-bottom:8px">🎬</div>
+        <div id="vidFileLabel" style="font-size:10px;letter-spacing:.12em;color:#c9b8f0">DROP VIDEO OR TAP TO BROWSE</div>
+        <div style="font-size:8px;letter-spacing:.1em;color:#6a5a8a;margin-top:6px">MP4 · MOV · WEBM · MKV — UP TO 2GB</div>
+      </div>
+
+      <div id="vidInfo" style="display:none;margin-bottom:14px;display:flex;gap:6px;flex-wrap:wrap">
+        <div style="padding:4px 10px;border:1px solid rgba(168,85,247,.25);background:rgba(168,85,247,.06);font-size:8px;letter-spacing:.1em;border-radius:3px"><span style="color:#9090b8">FILE </span><span style="color:#fff" id="vidName">--</span></div>
+        <div style="padding:4px 10px;border:1px solid rgba(168,85,247,.25);background:rgba(168,85,247,.06);font-size:8px;letter-spacing:.1em;border-radius:3px"><span style="color:#9090b8">SIZE </span><span style="color:#c084fc" id="vidSize">--</span></div>
+        <div style="padding:4px 10px;border:1px solid rgba(168,85,247,.25);background:rgba(168,85,247,.06);font-size:8px;letter-spacing:.1em;border-radius:3px"><span style="color:#9090b8">DURATION </span><span style="color:#c084fc" id="vidDur">--</span></div>
+      </div>
+
+      <!-- Strength / Sensitivity sliders -->
+      <div id="vidParamRow" style="display:none;margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:8px;letter-spacing:.15em;color:#9090b8">NOISE SUPPRESSION</span><span style="font-size:9px;color:#c084fc" id="vidStrV">85%</span></div>
+        <input type="range" id="vidStr" min="0.3" max="0.99" step="0.01" value="0.85" oninput="vidStrength=parseFloat(this.value);document.getElementById('vidStrV').textContent=Math.round(this.value*100)+'%'" style="width:100%;height:3px;margin-bottom:10px"/>
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:8px;letter-spacing:.15em;color:#9090b8">VOICE BOOST</span><span style="font-size:9px;color:#c084fc" id="vidBoostV">3.5×</span></div>
+        <input type="range" id="vidBoost" min="1" max="8" step="0.1" value="3.5" oninput="vidBoost=parseFloat(this.value);document.getElementById('vidBoostV').textContent=parseFloat(this.value).toFixed(1)+'×'" style="width:100%;height:3px"/>
+      </div>
+
+      <button id="vidProcessBtn" onclick="processVideo()" disabled
+        style="width:100%;padding:13px;font-size:10px;letter-spacing:.25em;font-weight:700;font-family:'Orbitron',sans-serif;
+        border:1px solid rgba(168,85,247,.4);background:linear-gradient(135deg,rgba(168,85,247,.15),rgba(232,121,249,.08));
+        color:#fff;cursor:not-allowed;opacity:.4;border-radius:4px;margin-bottom:12px;transition:all .2s">
+        ▶ EXTRACT &amp; AMPLIFY VOICE
+      </button>
+
+      <div id="vidProgWrap" style="display:none;margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;margin-bottom:5px">
+          <span style="font-size:8px;letter-spacing:.15em;color:#c9b8f0" id="vidStageTxt">// IDLE</span>
+          <span style="font-size:9px;color:#c084fc" id="vidPct">0%</span>
+        </div>
+        <div style="height:7px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);overflow:hidden;border-radius:4px">
+          <div id="vidProgBar" style="height:100%;width:0%;background:linear-gradient(90deg,#a855f7,#e879f9);box-shadow:0 0 10px rgba(168,85,247,.6);transition:width .3s"></div>
+        </div>
+        <div style="font-size:7px;color:#6a5a8a;letter-spacing:.08em;margin-top:5px;max-height:40px;overflow-y:auto" id="vidLog"></div>
+      </div>
+
+      <div id="vidErr" style="display:none;margin-bottom:10px;padding:9px 12px;border:1px solid rgba(244,114,182,.3);background:rgba(244,114,182,.06);font-size:9px;color:#f472b6;letter-spacing:.08em;border-radius:3px"></div>
+
+      <div id="vidResult" style="display:none">
+        <div style="font-size:9px;letter-spacing:.15em;color:#a78bfa;margin-bottom:8px">✓ VOICE ISOLATED &amp; AMPLIFIED</div>
+        <video id="vidPreview" controls style="width:100%;background:#000;border-radius:4px;margin-bottom:10px;max-height:280px"></video>
+        <a id="vidDownload" download="amplify_processed.mp4" style="display:block;text-decoration:none">
+          <button style="width:100%;padding:11px;font-size:9px;letter-spacing:.2em;border:1px solid rgba(168,85,247,.4);background:rgba(168,85,247,.1);color:#fff;cursor:pointer;border-radius:4px;font-family:'Share Tech Mono',monospace">↓ DOWNLOAD PROCESSED VIDEO</button>
+        </a>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -2334,6 +2404,268 @@ function tickEnhanced(){
 
 <script>
 // ── SERVICE WORKER — PWA offline support ──
+// ═══════════════════════════════════════════════════════
+// VIDEO VOICE EXTRACTOR — ffmpeg.wasm + offline DSP render
+// ═══════════════════════════════════════════════════════
+let vidFFmpeg=null,vidFFmpegLoaded=false,vidSelectedFile=null;
+let vidStrength=0.85,vidBoost=3.5,vidProcessing=false;
+const VID_MAX_BYTES=2*1024*1024*1024; // 2GB
+
+function openVideoModal(){document.getElementById('videoModalOverlay').style.display='flex';}
+function closeVideoModal(){if(!vidProcessing)document.getElementById('videoModalOverlay').style.display='none';}
+
+function onVidFileSelected(input){
+  const f=input.files[0];
+  if(!f)return;
+  if(f.size>VID_MAX_BYTES){
+    vidSetErr(`File too large (${(f.size/1073741824).toFixed(2)}GB). Max 2GB.`);
+    return;
+  }
+  vidSetErr(null);
+  vidSelectedFile=f;
+  document.getElementById('vidFileLabel').textContent=f.name;
+  document.getElementById('vidInfo').style.display='flex';
+  document.getElementById('vidParamRow').style.display='block';
+  document.getElementById('vidName').textContent=f.name.length>22?f.name.slice(0,19)+'…':f.name;
+  document.getElementById('vidSize').textContent=fmtVidBytes(f.size);
+  document.getElementById('vidDur').textContent='--';
+  // Try to read duration via a temp video element
+  const tempUrl=URL.createObjectURL(f);
+  const tv=document.createElement('video');
+  tv.preload='metadata';
+  tv.onloadedmetadata=()=>{
+    const d=tv.duration;
+    document.getElementById('vidDur').textContent=isFinite(d)?fmtVidDur(d):'--';
+    URL.revokeObjectURL(tempUrl);
+  };
+  tv.src=tempUrl;
+  const btn=document.getElementById('vidProcessBtn');
+  btn.disabled=false;btn.style.opacity='1';btn.style.cursor='pointer';
+  document.getElementById('vidResult').style.display='none';
+}
+
+function fmtVidBytes(b){
+  if(b>1073741824)return(b/1073741824).toFixed(2)+'GB';
+  if(b>1048576)return(b/1048576).toFixed(1)+'MB';
+  return(b/1024).toFixed(0)+'KB';
+}
+function fmtVidDur(s){
+  const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=Math.floor(s%60);
+  return h>0?`${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`:`${m}:${String(sec).padStart(2,'0')}`;
+}
+
+function vidSetErr(m){
+  const e=document.getElementById('vidErr');
+  if(m){e.textContent='⚠ '+m;e.style.display='block';}else e.style.display='none';
+}
+function vidSetStage(txt,pct){
+  document.getElementById('vidProgWrap').style.display='block';
+  document.getElementById('vidStageTxt').textContent='// '+txt;
+  if(pct!==undefined){
+    document.getElementById('vidPct').textContent=Math.round(pct)+'%';
+    document.getElementById('vidProgBar').style.width=Math.round(pct)+'%';
+  }
+}
+function vidLog(msg){
+  const l=document.getElementById('vidLog');
+  l.textContent=msg;
+}
+
+function vidLoadScript(src){
+  return new Promise((res,rej)=>{
+    const s=document.createElement('script');
+    s.src=src;s.onload=res;s.onerror=()=>rej(new Error('Failed to load '+src));
+    document.head.appendChild(s);
+  });
+}
+
+async function loadVidFFmpeg(){
+  if(vidFFmpegLoaded)return;
+  vidSetStage('Loading processing engine (one-time, ~30MB)…',2);
+  if(!window.FFmpegWASM) await vidLoadScript('https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js');
+  if(!window.FFmpegUtil) await vidLoadScript('https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js');
+  const {FFmpeg}=window.FFmpegWASM;
+  const {toBlobURL}=window.FFmpegUtil;
+  vidFFmpeg=new FFmpeg();
+  vidFFmpeg.on('log',({message})=>{vidLog(message);});
+  vidFFmpeg.on('progress',({progress})=>{
+    if(progress>=0&&progress<=1) vidSetStage(document.getElementById('vidStageTxt').textContent.replace('// ',''),10+progress*20);
+  });
+  const baseURL='https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+  await vidFFmpeg.load({
+    coreURL:await toBlobURL(`${baseURL}/ffmpeg-core.js`,'text/javascript'),
+    wasmURL:await toBlobURL(`${baseURL}/ffmpeg-core.wasm`,'application/wasm'),
+  });
+  vidFFmpegLoaded=true;
+}
+
+// ── Offline noise gate: percentile-based per-band noise floor, no calibration window needed ──
+function vidGateOffline(channelData,sr,strength,onProgress){
+  const N=channelData.length;
+  const chunkSize=2048;
+  const nChunks=Math.ceil(N/chunkSize);
+  const bandsPerChunk=new Array(nChunks);
+  for(let c=0;c<nChunks;c++){
+    const start=c*chunkSize,end=Math.min(N,start+chunkSize),len=end-start;
+    const bSz=Math.max(1,Math.floor(len/8));
+    const bE=new Float32Array(8);
+    for(let b=0;b<8;b++){
+      let e=0,cnt=0;
+      const bs=start+b*bSz,be=Math.min(end,bs+bSz);
+      for(let i=bs;i<be;i++){e+=channelData[i]*channelData[i];cnt++;}
+      bE[b]=cnt>0?Math.sqrt(e/cnt):0;
+    }
+    bandsPerChunk[c]=bE;
+  }
+  // Percentile-based noise floor per band (15th percentile = assume bottom 15% of frames are noise-dominant)
+  const noiseProfile=new Float32Array(8);
+  for(let b=0;b<8;b++){
+    const vals=bandsPerChunk.map(f=>f[b]).sort((a,c)=>a-c);
+    const idx=Math.floor(vals.length*0.15);
+    noiseProfile[b]=(vals[idx]||0)*1.3;
+  }
+  const VOICE=[1,2,3,4,5];
+  const sensitivity=0.7;
+  const out=new Float32Array(N);
+  let gateSmooth=0;
+  for(let c=0;c<nChunks;c++){
+    const bE=bandsPerChunk[c];
+    const start=c*chunkSize,end=Math.min(N,start+chunkSize);
+    for(let i=start;i<end;i++){
+      const localLen=end-start;
+      const band=Math.min(7,Math.floor(((i-start)/localLen)*8));
+      const nRef=noiseProfile[band]*strength;
+      const sig=bE[band];
+      const isV=VOICE.includes(band);
+      const snr=sig/(nRef+1e-10);
+      const snrT=1.0+sensitivity*3.0;
+      const tg=(snr>snrT&&isV)?1.0:(snr>snrT*.5&&isV)?Math.pow((snr-snrT*.5)/(snrT*.5),.5):0.0;
+      const alpha=tg>gateSmooth?0.012:0.045;
+      gateSmooth=gateSmooth*(1-alpha)+tg*alpha;
+      const sub=Math.max(0,1-(nRef/(sig+1e-10))*strength);
+      out[i]=channelData[i]*gateSmooth*Math.max(0.04,sub);
+    }
+    if(c%200===0&&onProgress)onProgress(c/nChunks);
+  }
+  return out;
+}
+
+// ── Offline DSP render: HP → LP → Compressor → Gain via OfflineAudioContext ──
+async function vidRenderDSP(gatedArray,sr,boost){
+  const offCtx=new OfflineAudioContext(1,gatedArray.length,sr);
+  const buf=offCtx.createBuffer(1,gatedArray.length,sr);
+  buf.copyToChannel(gatedArray,0);
+  const src=offCtx.createBufferSource();src.buffer=buf;
+  const hp=offCtx.createBiquadFilter();hp.type='highpass';hp.frequency.value=85;hp.Q.value=.7;
+  const lp=offCtx.createBiquadFilter();lp.type='lowpass';lp.frequency.value=3800;lp.Q.value=.7;
+  const presence=offCtx.createBiquadFilter();presence.type='peaking';presence.frequency.value=2200;presence.Q.value=1.1;presence.gain.value=3;
+  const comp=offCtx.createDynamicsCompressor();
+  comp.threshold.value=-42;comp.knee.value=10;comp.ratio.value=9;comp.attack.value=.003;comp.release.value=.12;
+  const gain=offCtx.createGain();gain.gain.value=boost;
+  src.connect(hp);hp.connect(lp);lp.connect(presence);presence.connect(comp);comp.connect(gain);gain.connect(offCtx.destination);
+  src.start(0);
+  return await offCtx.startRendering();
+}
+
+// ── WAV encoder ──
+function vidBufferToWav(buffer){
+  const sr=buffer.sampleRate,samples=buffer.getChannelData(0);
+  const dataSize=samples.length*2;
+  const arrBuf=new ArrayBuffer(44+dataSize);
+  const view=new DataView(arrBuf);
+  function ws(off,str){for(let i=0;i<str.length;i++)view.setUint8(off+i,str.charCodeAt(i));}
+  ws(0,'RIFF');view.setUint32(4,36+dataSize,true);ws(8,'WAVE');
+  ws(12,'fmt ');view.setUint32(16,16,true);view.setUint16(20,1,true);
+  view.setUint16(22,1,true);view.setUint32(24,sr,true);
+  view.setUint32(28,sr*2,true);view.setUint16(32,2,true);view.setUint16(34,16,true);
+  ws(36,'data');view.setUint32(40,dataSize,true);
+  let off=44;
+  for(let i=0;i<samples.length;i++,off+=2){
+    let s=Math.max(-1,Math.min(1,samples[i]));
+    view.setInt16(off,s<0?s*0x8000:s*0x7FFF,true);
+  }
+  return new Uint8Array(arrBuf);
+}
+
+function cancelVideoProcess(){
+  vidProcessing=false;
+  vidSetStage('Cancelled',0);
+}
+
+async function processVideo(){
+  if(!vidSelectedFile||vidProcessing)return;
+  vidProcessing=true;
+  vidSetErr(null);
+  document.getElementById('vidResult').style.display='none';
+  document.getElementById('vidProcessBtn').disabled=true;
+  document.getElementById('vidProcessBtn').style.opacity='.4';
+  document.getElementById('vidProcessBtn').style.cursor='not-allowed';
+
+  try{
+    await loadVidFFmpeg();
+
+    vidSetStage('Writing video to virtual filesystem…',12);
+    const {fetchFile}=window.FFmpegUtil;
+    const inputName='input'+(vidSelectedFile.name.match(/\.[^.]+$/)?.[0]||'.mp4');
+    await vidFFmpeg.writeFile(inputName, await fetchFile(vidSelectedFile));
+
+    vidSetStage('Extracting audio track…',22);
+    await vidFFmpeg.exec(['-i',inputName,'-vn','-acodec','pcm_s16le','-ar','44100','-ac','1','extracted.wav']);
+
+    vidSetStage('Reading extracted audio…',35);
+    const wavData=await vidFFmpeg.readFile('extracted.wav');
+    const wavBlob=new Blob([wavData.buffer],{type:'audio/wav'});
+    await vidFFmpeg.deleteFile('extracted.wav');
+
+    vidSetStage('Decoding audio samples…',42);
+    const tmpCtx=new(window.AudioContext||window.webkitAudioContext)();
+    const arrBuf=await wavBlob.arrayBuffer();
+    const audioBuf=await tmpCtx.decodeAudioData(arrBuf);
+    const channelData=audioBuf.getChannelData(0);
+
+    vidSetStage('Analyzing noise floor & gating non-voice audio…',50);
+    const gated=vidGateOffline(channelData,audioBuf.sampleRate,vidStrength,(p)=>{
+      vidSetStage('Analyzing noise floor & gating non-voice audio…',50+p*20);
+    });
+
+    vidSetStage('Running voice DSP chain (filters + compressor + boost)…',72);
+    const rendered=await vidRenderDSP(gated,audioBuf.sampleRate,vidBoost);
+    tmpCtx.close();
+
+    vidSetStage('Encoding processed audio…',80);
+    const outWavBytes=vidBufferToWav(rendered);
+    await vidFFmpeg.writeFile('processed.wav',outWavBytes);
+
+    vidSetStage('Remuxing audio into original video…',86);
+    await vidFFmpeg.exec(['-i',inputName,'-i','processed.wav','-map','0:v:0','-map','1:a:0','-c:v','copy','-c:a','aac','-b:a','192k','-shortest','output.mp4']);
+
+    vidSetStage('Finalizing…',96);
+    const outData=await vidFFmpeg.readFile('output.mp4');
+    const outBlob=new Blob([outData.buffer],{type:'video/mp4'});
+    const outUrl=URL.createObjectURL(outBlob);
+
+    // Cleanup VFS
+    try{await vidFFmpeg.deleteFile(inputName);}catch(_){}
+    try{await vidFFmpeg.deleteFile('processed.wav');}catch(_){}
+    try{await vidFFmpeg.deleteFile('output.mp4');}catch(_){}
+
+    vidSetStage('Done',100);
+    document.getElementById('vidPreview').src=outUrl;
+    document.getElementById('vidDownload').href=outUrl;
+    const origName=vidSelectedFile.name.replace(/\.[^.]+$/,'');
+    document.getElementById('vidDownload').download=`${origName}_amplified.mp4`;
+    document.getElementById('vidResult').style.display='block';
+  }catch(e){
+    console.error(e);
+    vidSetErr('Processing failed: '+(e.message||e));
+  }finally{
+    vidProcessing=false;
+    document.getElementById('vidProcessBtn').disabled=false;
+    document.getElementById('vidProcessBtn').style.opacity='1';
+    document.getElementById('vidProcessBtn').style.cursor='pointer';
+  }
+}
+
 if('serviceWorker' in navigator){
   window.addEventListener('load', ()=>{
     navigator.serviceWorker.register('/sw.js').then(reg=>{
