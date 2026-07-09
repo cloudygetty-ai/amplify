@@ -790,10 +790,10 @@ body.overlay-mode .panel{background:rgba(14,10,30,.25)!important;backdrop-filter
 
       <!-- Strength / Sensitivity sliders -->
       <div id="vidParamRow" style="display:none;margin-bottom:14px">
-        <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:8px;letter-spacing:.15em;color:#9090b8">NOISE SUPPRESSION</span><span style="font-size:9px;color:#c084fc" id="vidStrV">85%</span></div>
-        <input type="range" id="vidStr" min="0.3" max="0.99" step="0.01" value="0.85" oninput="vidStrength=parseFloat(this.value);document.getElementById('vidStrV').textContent=Math.round(this.value*100)+'%'" style="width:100%;height:3px;margin-bottom:10px"/>
-        <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:8px;letter-spacing:.15em;color:#9090b8">VOICE BOOST</span><span style="font-size:9px;color:#c084fc" id="vidBoostV">3.5×</span></div>
-        <input type="range" id="vidBoost" min="1" max="8" step="0.1" value="3.5" oninput="vidBoost=parseFloat(this.value);document.getElementById('vidBoostV').textContent=parseFloat(this.value).toFixed(1)+'×'" style="width:100%;height:3px"/>
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:8px;letter-spacing:.15em;color:#9090b8">NOISE SUPPRESSION</span><span style="font-size:9px;color:#c084fc" id="vidStrV">65%</span></div>
+        <input type="range" id="vidStr" min="0.3" max="0.99" step="0.01" value="0.65" oninput="vidStrength=parseFloat(this.value);document.getElementById('vidStrV').textContent=Math.round(this.value*100)+'%'" style="width:100%;height:3px;margin-bottom:10px"/>
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:8px;letter-spacing:.15em;color:#9090b8">VOICE BOOST</span><span style="font-size:9px;color:#c084fc" id="vidBoostV">5.0×</span></div>
+        <input type="range" id="vidBoost" min="1" max="10" step="0.1" value="5.0" oninput="vidBoost=parseFloat(this.value);document.getElementById('vidBoostV').textContent=parseFloat(this.value).toFixed(1)+'×'" style="width:100%;height:3px"/>
       </div>
 
       <button id="vidProcessBtn" onclick="processVideo()" disabled
@@ -2408,7 +2408,7 @@ function tickEnhanced(){
 // VIDEO VOICE EXTRACTOR — ffmpeg.wasm + offline DSP render
 // ═══════════════════════════════════════════════════════
 let vidFFmpeg=null,vidFFmpegLoaded=false,vidSelectedFile=null;
-let vidStrength=0.85,vidBoost=3.5,vidProcessing=false;
+let vidStrength=0.65,vidBoost=5.0,vidProcessing=false;
 const VID_MAX_BYTES=2*1024*1024*1024; // 2GB
 
 function openVideoModal(){document.getElementById('videoModalOverlay').style.display='flex';}
@@ -2521,10 +2521,10 @@ function vidGateOffline(channelData,sr,strength,onProgress){
   const noiseProfile=new Float32Array(8);
   for(let b=0;b<8;b++){
     const vals=bandsPerChunk.map(f=>f[b]).sort((a,c)=>a-c);
-    const idx=Math.floor(vals.length*0.15);
-    noiseProfile[b]=(vals[idx]||0)*1.3;
+    const idx=Math.floor(vals.length*0.10);  // 10th percentile = tighter noise reference
+    noiseProfile[b]=(vals[idx]||0)*1.1;  // less headroom = doesn't crush quiet voices
   }
-  const VOICE=[1,2,3,4,5];
+  const VOICE=[0,1,2,3,4,5];  // Include band 0 for low-pitched voice fundamentals
   const sensitivity=0.7;
   const out=new Float32Array(N);
   let gateSmooth=0;
@@ -2538,12 +2538,12 @@ function vidGateOffline(channelData,sr,strength,onProgress){
       const sig=bE[band];
       const isV=VOICE.includes(band);
       const snr=sig/(nRef+1e-10);
-      const snrT=1.0+sensitivity*3.0;
+      const snrT=0.6+sensitivity*1.8;  // Lower = catches quieter voices
       const tg=(snr>snrT&&isV)?1.0:(snr>snrT*.5&&isV)?Math.pow((snr-snrT*.5)/(snrT*.5),.5):0.0;
       const alpha=tg>gateSmooth?0.012:0.045;
       gateSmooth=gateSmooth*(1-alpha)+tg*alpha;
       const sub=Math.max(0,1-(nRef/(sig+1e-10))*strength);
-      out[i]=channelData[i]*gateSmooth*Math.max(0.04,sub);
+      out[i]=channelData[i]*gateSmooth*Math.max(0.18,sub);  // don't gate quiet voice to zero
     }
     if(c%200===0&&onProgress)onProgress(c/nChunks);
   }
@@ -2556,13 +2556,14 @@ async function vidRenderDSP(gatedArray,sr,boost){
   const buf=offCtx.createBuffer(1,gatedArray.length,sr);
   buf.copyToChannel(gatedArray,0);
   const src=offCtx.createBufferSource();src.buffer=buf;
-  const hp=offCtx.createBiquadFilter();hp.type='highpass';hp.frequency.value=85;hp.Q.value=.7;
-  const lp=offCtx.createBiquadFilter();lp.type='lowpass';lp.frequency.value=3800;lp.Q.value=.7;
-  const presence=offCtx.createBiquadFilter();presence.type='peaking';presence.frequency.value=2200;presence.Q.value=1.1;presence.gain.value=3;
+  const hp=offCtx.createBiquadFilter();hp.type='highpass';hp.frequency.value=70;hp.Q.value=.5;  // lower = picks up deeper voices
+  const lp=offCtx.createBiquadFilter();lp.type='lowpass';lp.frequency.value=5000;lp.Q.value=.6;  // wider = more voice harmonics
+  const lowBoost=offCtx.createBiquadFilter();lowBoost.type='peaking';lowBoost.frequency.value=300;lowBoost.Q.value=0.8;lowBoost.gain.value=5;  // pull up low voice body
+  const presence=offCtx.createBiquadFilter();presence.type='peaking';presence.frequency.value=2200;presence.Q.value=1.1;presence.gain.value=4;
   const comp=offCtx.createDynamicsCompressor();
-  comp.threshold.value=-42;comp.knee.value=10;comp.ratio.value=9;comp.attack.value=.003;comp.release.value=.12;
+  comp.threshold.value=-55;comp.knee.value=8;comp.ratio.value=14;comp.attack.value=.001;comp.release.value=.08;  // catch quiet voice peaks
   const gain=offCtx.createGain();gain.gain.value=boost;
-  src.connect(hp);hp.connect(lp);lp.connect(presence);presence.connect(comp);comp.connect(gain);gain.connect(offCtx.destination);
+  src.connect(hp);hp.connect(lowBoost);lowBoost.connect(lp);lp.connect(presence);presence.connect(comp);comp.connect(gain);gain.connect(offCtx.destination);
   src.start(0);
   return await offCtx.startRendering();
 }
