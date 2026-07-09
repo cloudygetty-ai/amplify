@@ -4,854 +4,1150 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0"/>
 <meta name="apple-mobile-web-app-capable" content="yes"/>
-<meta name="theme-color" content="#000000"/>
-<title>SPECTER — Hidden Camera Detector</title>
-<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
+<meta name="theme-color" content="#000"/>
+<title>SPECTER v2 — Hidden Camera Detector</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --r:#ff2244;--r2:#ff4466;--rg:rgba(255,34,68,.15);
-  --g:#00ff88;--g2:#00cc66;
-  --a:#ffbb00;--p:#cc44ff;
-  --bg:#000;--panel:rgba(10,0,0,.95);
-  --b1:rgba(255,34,68,.2);--b2:rgba(255,34,68,.08);
-  --txt:#ffe0e0;--dim:#883344;--dimmer:#441122;
+  --r:#ff2244;--r2:#ff4466;--g:#00ff88;--g2:#00cc66;--a:#ffb300;--p:#c044ff;
+  --bg:#000;--panel:rgba(8,0,2,.97);--b1:rgba(255,34,68,.18);--b2:rgba(255,34,68,.07);
+  --txt:#ffe4e8;--dim:#773344;--dimmer:#3a1122;
   --font:'Share Tech Mono',monospace;--title:'Orbitron',sans-serif;
 }
 html,body{min-height:100vh;background:#000;overflow-x:hidden}
-body{font-family:var(--font);color:var(--txt);display:flex;flex-direction:column;align-items:center;padding:0 0 60px;position:relative}
-
-/* ── BG ── */
+body{font-family:var(--font);color:var(--txt);display:flex;flex-direction:column;align-items:center;padding:0 0 80px;position:relative}
 body::before{content:'';position:fixed;inset:0;z-index:0;
-  background:radial-gradient(ellipse 60% 40% at 50% 0%,rgba(255,20,40,.12) 0%,transparent 60%),
-             radial-gradient(ellipse 40% 30% at 10% 80%,rgba(180,0,40,.08) 0%,transparent 50%),
-             radial-gradient(ellipse 40% 30% at 90% 60%,rgba(200,0,60,.06) 0%,transparent 50%);
+  background:radial-gradient(ellipse 60% 40% at 50% -5%,rgba(255,20,40,.14) 0%,transparent 55%),
+             radial-gradient(ellipse 50% 35% at 0% 70%,rgba(160,0,40,.09) 0%,transparent 50%),
+             radial-gradient(ellipse 50% 35% at 100% 50%,rgba(190,0,60,.07) 0%,transparent 50%);
   pointer-events:none}
 .grid{position:fixed;inset:0;z-index:0;pointer-events:none;
-  background-image:linear-gradient(rgba(255,34,68,.04) 1px,transparent 1px),linear-gradient(90deg,rgba(255,34,68,.04) 1px,transparent 1px);
-  background-size:22px 22px}
-.scan-line{position:fixed;left:0;right:0;height:2px;top:-2px;z-index:1;pointer-events:none;
-  background:linear-gradient(90deg,transparent,rgba(255,34,68,.5),transparent);
-  animation:scandown 4s linear infinite;filter:blur(.5px)}
-@keyframes scandown{0%{top:-2px;opacity:0}5%{opacity:1}95%{opacity:1}100%{top:100vh;opacity:0}}
+  background-image:linear-gradient(rgba(255,34,68,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(255,34,68,.035) 1px,transparent 1px);
+  background-size:20px 20px}
+.scanl{position:fixed;left:0;right:0;height:2px;top:-2px;z-index:1;pointer-events:none;
+  background:linear-gradient(90deg,transparent,rgba(255,34,68,.55),transparent);
+  animation:sd 4s linear infinite;filter:blur(.5px)}
+@keyframes sd{0%{top:-2px;opacity:0}5%{opacity:1}95%{opacity:1}100%{top:100vh;opacity:0}}
 
-/* ── HEADER ── */
-.hdr{position:relative;z-index:2;width:100%;max-width:720px;text-align:center;padding:20px 16px 0}
-.hdr-badges{display:flex;justify-content:space-between;margin-bottom:10px}
-.badge{font-size:7px;letter-spacing:.3em;padding:3px 9px;border:1px solid var(--dimmer);color:var(--dim)}
-.badge.live{border-color:rgba(255,34,68,.4);color:var(--r2);animation:badgepulse 2s infinite}
-@keyframes badgepulse{0%,100%{box-shadow:0 0 4px rgba(255,34,68,.2)}50%{box-shadow:0 0 12px rgba(255,34,68,.5)}}
-h1{font-family:var(--title);font-size:clamp(40px,10vw,68px);font-weight:900;letter-spacing:.1em;
-  background:linear-gradient(135deg,#ff6677 0%,#ff2244 40%,#cc0022 70%,#ff4466 100%);
+/* HEADER */
+.hdr{position:relative;z-index:2;width:100%;max-width:740px;text-align:center;padding:18px 14px 0}
+.hdr-row{display:flex;justify-content:space-between;margin-bottom:10px}
+.hbadge{font-size:7px;letter-spacing:.28em;padding:3px 9px;border:1px solid var(--dimmer);color:var(--dim)}
+.hbadge.live{border-color:rgba(255,34,68,.5);color:var(--r2);animation:gp 1.8s infinite}
+@keyframes gp{0%,100%{box-shadow:0 0 4px rgba(255,34,68,.2)}50%{box-shadow:0 0 14px rgba(255,34,68,.6)}}
+h1{font-family:var(--title);font-size:clamp(38px,9vw,62px);font-weight:900;letter-spacing:.1em;
+  background:linear-gradient(135deg,#ff7788,#ff2244 40%,#cc0022 70%,#ff5566);
   -webkit-background-clip:text;-webkit-text-fill-color:transparent;
-  filter:drop-shadow(0 0 20px rgba(255,34,68,.5));line-height:1}
-.sub{font-size:9px;letter-spacing:.4em;color:var(--dim);margin-top:5px}
-.hdr-line{height:1px;margin-top:12px;background:linear-gradient(90deg,transparent,var(--r),transparent);opacity:.4}
+  filter:drop-shadow(0 0 22px rgba(255,34,68,.55));line-height:1}
+.sub{font-size:8px;letter-spacing:.38em;color:var(--dim);margin-top:4px}
+.hline{height:1px;margin-top:10px;background:linear-gradient(90deg,transparent,var(--r),transparent);opacity:.4}
 
-/* ── PANEL ── */
-.panel{width:100%;max-width:720px;position:relative;z-index:2;
-  background:var(--panel);border:1px solid var(--b1);margin-top:0;
-  box-shadow:0 0 40px rgba(255,34,68,.06),0 20px 60px rgba(0,0,0,.8),inset 0 0 30px rgba(255,0,20,.03)}
-.corner{position:absolute;width:14px;height:14px;border-color:var(--r);border-style:solid;z-index:3}
-.corner.tl{top:-1px;left:-1px;border-width:2px 0 0 2px}
-.corner.tr{top:-1px;right:-1px;border-width:2px 2px 0 0}
-.corner.bl{bottom:-1px;left:-1px;border-width:0 0 2px 2px}
-.corner.br{bottom:-1px;right:-1px;border-width:0 2px 2px 0}
+/* PANEL */
+.panel{width:100%;max-width:740px;background:var(--panel);border:1px solid var(--b1);position:relative;z-index:2;
+  box-shadow:0 0 50px rgba(255,34,68,.05),0 24px 70px rgba(0,0,0,.85),inset 0 0 30px rgba(255,0,20,.03)}
+.cn{position:absolute;width:14px;height:14px;border-color:var(--r);border-style:solid;z-index:3}
+.cn.tl{top:-1px;left:-1px;border-width:2px 0 0 2px}.cn.tr{top:-1px;right:-1px;border-width:2px 2px 0 0}
+.cn.bl{bottom:-1px;left:-1px;border-width:0 0 2px 2px}.cn.br{bottom:-1px;right:-1px;border-width:0 2px 2px 0}
 
-/* ── STATUS ── */
-.statusbar{display:flex;align-items:center;gap:5px;padding:8px 12px;flex-wrap:wrap;
-  border-bottom:1px solid var(--b1);background:rgba(20,0,0,.6)}
-.seg{display:flex;align-items:center;gap:5px;padding:3px 8px;border:1px solid var(--dimmer);background:rgba(255,34,68,.03);font-size:8px}
-.seg.hi{border-color:rgba(255,34,68,.3);background:rgba(255,34,68,.07)}
-.sdot{width:5px;height:5px;border-radius:50%;background:#220011;flex-shrink:0;transition:all .2s}
-.sdot.on{background:var(--r);box-shadow:0 0 6px var(--r)}
-.sdot.ok{background:var(--g);box-shadow:0 0 6px var(--g)}
-.sdot.warn{background:var(--a);box-shadow:0 0 6px var(--a);animation:blink .5s infinite}
-@keyframes blink{0%,100%{opacity:1}50%{opacity:.2}}
+/* STATUS */
+.sb{display:flex;align-items:center;gap:4px;padding:7px 12px;flex-wrap:wrap;border-bottom:1px solid var(--b1);background:rgba(15,0,5,.7)}
+.seg{display:flex;align-items:center;gap:4px;padding:3px 7px;border:1px solid var(--dimmer);background:rgba(255,34,68,.025);font-size:8px;white-space:nowrap}
+.seg.hi{border-color:rgba(255,34,68,.35);background:rgba(255,34,68,.07)}
+.dot{width:5px;height:5px;border-radius:50%;background:#200010;flex-shrink:0;transition:all .2s}
+.dot.on{background:var(--r);box-shadow:0 0 7px var(--r)}
+.dot.ok{background:var(--g);box-shadow:0 0 7px var(--g)}
+.dot.w{background:var(--a);box-shadow:0 0 7px var(--a);animation:bk .5s infinite}
+@keyframes bk{0%,100%{opacity:1}50%{opacity:.2}}
 .sl{font-size:7px;letter-spacing:.1em;color:var(--dim)}
-.sv{font-size:8px;color:var(--txt);letter-spacing:.05em}
-.sv.r{color:var(--r)}
-.sv.g{color:var(--g)}
-.sv.a{color:var(--a)}
-.threat-badge{margin-left:auto;padding:3px 10px;border:1px solid rgba(255,34,68,.3);
-  font-size:8px;letter-spacing:.2em;color:var(--dim);transition:all .3s}
-.threat-badge.clear{border-color:rgba(0,255,136,.3);color:var(--g);background:rgba(0,255,136,.05)}
-.threat-badge.warn{border-color:rgba(255,187,0,.4);color:var(--a);background:rgba(255,187,0,.06);animation:tbwarn .8s infinite}
-.threat-badge.alert{border-color:rgba(255,34,68,.6);color:var(--r);background:rgba(255,34,68,.1);animation:tbalert .4s infinite}
-@keyframes tbwarn{0%,100%{box-shadow:0 0 4px rgba(255,187,0,.2)}50%{box-shadow:0 0 12px rgba(255,187,0,.5)}}
-@keyframes tbalert{0%,100%{box-shadow:0 0 6px rgba(255,34,68,.3)}50%{box-shadow:0 0 20px rgba(255,34,68,.8)}}
+.sv{font-size:8px;color:var(--txt)}
+.sv.r{color:var(--r)}.sv.g{color:var(--g)}.sv.a{color:var(--a)}.sv.p{color:var(--p)}
+.tbadge{margin-left:auto;padding:3px 10px;border:1px solid rgba(255,34,68,.3);font-size:8px;letter-spacing:.18em;color:var(--dim);transition:all .3s}
+.tbadge.clear{border-color:rgba(0,255,136,.35);color:var(--g);background:rgba(0,255,136,.05)}
+.tbadge.warn{border-color:rgba(255,179,0,.45);color:var(--a);animation:tw .8s infinite}
+.tbadge.alert{border-color:var(--r);color:var(--r);background:rgba(255,34,68,.09);animation:ta .4s infinite}
+@keyframes tw{0%,100%{box-shadow:0 0 4px rgba(255,179,0,.2)}50%{box-shadow:0 0 14px rgba(255,179,0,.6)}}
+@keyframes ta{0%,100%{box-shadow:0 0 6px rgba(255,34,68,.3)}50%{box-shadow:0 0 22px rgba(255,34,68,.9)}}
 
-/* ── CAMERA VIEWPORT ── */
-.cam-wrap{position:relative;background:#000;border-bottom:1px solid var(--b1);overflow:hidden}
-video#camFeed{width:100%;display:block;max-height:340px;object-fit:cover;opacity:.85}
-canvas#irOverlay{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
-.cam-hud{position:absolute;top:8px;left:8px;right:8px;display:flex;justify-content:space-between;pointer-events:none}
-.hud-pill{padding:3px 8px;border:1px solid rgba(255,34,68,.3);background:rgba(0,0,0,.7);font-size:7px;letter-spacing:.15em;color:var(--r2)}
-.cam-crosshair{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);pointer-events:none;opacity:.4}
-.cam-crosshair::before,.cam-crosshair::after{content:'';position:absolute;background:rgba(255,34,68,.6)}
-.cam-crosshair::before{width:20px;height:1px;top:0;left:-10px}
-.cam-crosshair::after{width:1px;height:20px;top:-10px;left:0}
-.cam-off{display:flex;flex-direction:column;align-items:center;justify-content:center;height:280px;gap:10px;background:rgba(10,0,0,.8)}
-.cam-off-icon{font-size:40px;opacity:.3}
-.cam-off-txt{font-size:9px;letter-spacing:.2em;color:var(--dim)}
+/* CAMERA */
+.camwrap{position:relative;background:#000;border-bottom:1px solid var(--b1);overflow:hidden;min-height:220px}
+video#cam{width:100%;display:block;max-height:360px;object-fit:cover}
+canvas#iro{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.camhud{position:absolute;top:8px;left:8px;right:8px;display:flex;justify-content:space-between;pointer-events:none;z-index:5}
+.hudpill{padding:3px 8px;border:1px solid rgba(255,34,68,.35);background:rgba(0,0,0,.75);font-size:7px;letter-spacing:.12em;color:var(--r2)}
+.camoff{display:flex;flex-direction:column;align-items:center;justify-content:center;height:260px;gap:10px;background:rgba(8,0,2,.9)}
+.camoff-ico{font-size:44px;opacity:.25}
+.camoff-txt{font-size:9px;letter-spacing:.18em;color:var(--dim)}
+.confidence-hud{position:absolute;bottom:8px;left:8px;right:8px;display:flex;gap:6px;pointer-events:none;z-index:5;flex-wrap:wrap}
+.conf-pill{padding:3px 8px;border:1px solid rgba(255,34,68,.3);background:rgba(0,0,0,.8);font-size:7px;color:var(--r2);letter-spacing:.1em}
+.conf-pill.hi{border-color:var(--r);color:var(--r);box-shadow:0 0 6px rgba(255,34,68,.4)}
 
-/* ── IR HOTSPOT LIST ── */
-.hotspot-bar{padding:8px 12px;border-bottom:1px solid var(--b1);background:rgba(0,0,0,.4);
-  display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.hs-label{font-size:7px;letter-spacing:.2em;color:var(--dim)}
-.hs-pill{padding:2px 8px;border:1px solid rgba(255,34,68,.4);background:rgba(255,34,68,.08);
-  font-size:8px;color:var(--r2);letter-spacing:.1em}
-.hs-count{font-size:14px;font-family:var(--title);color:var(--r);text-shadow:0 0 10px rgba(255,34,68,.5);margin-right:4px}
+/* HOTSPOT BAR */
+.hsbar{padding:7px 12px;border-bottom:1px solid var(--b1);background:rgba(0,0,0,.5);display:flex;align-items:center;gap:7px;flex-wrap:wrap;min-height:36px}
+.hscnt{font-size:15px;font-family:var(--title);color:var(--r);text-shadow:0 0 10px rgba(255,34,68,.5)}
+.hslbl{font-size:7px;letter-spacing:.18em;color:var(--dim)}
+.hspill{padding:2px 7px;border:1px solid rgba(255,34,68,.4);background:rgba(255,34,68,.07);font-size:8px;color:var(--r2);letter-spacing:.08em}
 
-/* ── SCAN MODULES ── */
-.modules{padding:12px;display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.module{background:rgba(15,0,5,.8);border:1px solid var(--dimmer);padding:10px 12px;position:relative;overflow:hidden}
-.module::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;
-  background:linear-gradient(90deg,transparent,rgba(255,34,68,.3),transparent);opacity:.5}
-.mod-header{display:flex;align-items:center;gap:6px;margin-bottom:8px}
-.mod-icon{font-size:14px}
-.mod-title{font-size:8px;letter-spacing:.2em;color:var(--dim);font-family:var(--font)}
-.mod-status{margin-left:auto;font-size:7px;letter-spacing:.15em;color:var(--dimmer)}
-.mod-status.active{color:var(--r)}
-.mod-status.ok{color:var(--g)}
-.mod-val{font-size:20px;font-family:var(--title);color:var(--r);line-height:1;text-shadow:0 0 12px rgba(255,34,68,.4)}
-.mod-val.safe{color:var(--g);text-shadow:0 0 12px rgba(0,255,136,.4)}
-.mod-val.warn{color:var(--a);text-shadow:0 0 12px rgba(255,187,0,.4)}
-.mod-sub{font-size:7px;letter-spacing:.1em;color:var(--dimmer);margin-top:3px}
-.mod-bar{height:4px;background:rgba(255,34,68,.1);border:1px solid var(--dimmer);margin-top:8px;overflow:hidden}
-.mod-fill{height:100%;background:linear-gradient(90deg,var(--r2),var(--r));width:0%;transition:width .4s;
-  box-shadow:0 0 6px rgba(255,34,68,.5)}
-.mod-fill.safe{background:linear-gradient(90deg,var(--g2),var(--g))}
-.mod-fill.warn{background:linear-gradient(90deg,#cc8800,var(--a))}
-.mod-log{font-size:6px;letter-spacing:.08em;color:var(--dimmer);margin-top:6px;line-height:1.6;
-  max-height:40px;overflow-y:auto}
+/* PINPOINT PANEL */
+.pinpoint{display:none;margin:0 12px 0;border:1px solid rgba(255,34,68,.35);background:rgba(255,20,40,.04);padding:10px 12px}
+.pp-title{font-size:8px;letter-spacing:.25em;color:var(--r);margin-bottom:8px}
+.pp-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.pp-card{background:rgba(0,0,0,.5);border:1px solid var(--dimmer);padding:8px 10px;text-align:center}
+.pp-val{font-size:16px;font-family:var(--title);color:var(--r);text-shadow:0 0 8px rgba(255,34,68,.4)}
+.pp-lbl{font-size:6px;letter-spacing:.15em;color:var(--dimmer);margin-top:3px}
+.brand-result{margin-top:10px;padding:8px 10px;border:1px solid rgba(255,34,68,.3);background:rgba(0,0,0,.5)}
+.brand-name{font-size:14px;font-family:var(--title);color:var(--r2)}
+.brand-sub{font-size:7px;letter-spacing:.1em;color:var(--dim);margin-top:3px;line-height:1.6}
+.brand-conf{font-size:9px;color:var(--a);margin-top:4px}
 
-/* ── NETWORK SCAN ── */
-.net-wrap{padding:0 12px 12px}
-.net-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
-.net-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(56px,1fr));gap:4px;max-height:120px;overflow-y:auto}
-.net-cell{padding:4px 6px;border:1px solid var(--dimmer);background:rgba(0,0,0,.4);font-size:7px;letter-spacing:.06em;color:var(--dimmer);text-align:center;cursor:pointer;transition:all .15s}
-.net-cell.scanning{border-color:rgba(255,187,0,.3);color:var(--a);animation:cellscan .6s infinite}
-@keyframes cellscan{0%,100%{opacity:1}50%{opacity:.3}}
-.net-cell.device{border-color:rgba(255,34,68,.5);color:var(--r);background:rgba(255,34,68,.08)}
-.net-cell.camera{border-color:var(--r);color:var(--r);background:rgba(255,34,68,.15);
-  box-shadow:0 0 8px rgba(255,34,68,.3);font-weight:bold}
-.net-cell.safe{border-color:rgba(0,255,136,.2);color:#446655}
+/* LIVE FEED FROM CAMERA */
+.camfeed-panel{display:none;margin:8px 12px 0;border:1px solid rgba(255,34,68,.35);background:rgba(0,0,0,.6);overflow:hidden}
+.camfeed-hdr{padding:7px 10px;border-bottom:1px solid var(--dimmer);font-size:8px;letter-spacing:.2em;color:var(--r2);display:flex;justify-content:space-between;align-items:center}
+.camfeed-body{position:relative;min-height:160px;display:flex;align-items:center;justify-content:center}
+img#camfeedimg{width:100%;display:block;max-height:240px;object-fit:contain}
+video#camfeedvid{width:100%;display:block;max-height:240px}
+.camfeed-msg{font-size:8px;letter-spacing:.1em;color:var(--dimmer);text-align:center;padding:20px}
+.camfeed-controls{padding:7px 10px;display:flex;gap:5px;flex-wrap:wrap;border-top:1px solid var(--dimmer)}
 
-/* ── ALERTS ── */
-.alert-feed{padding:0 12px 12px}
-.alert-item{padding:7px 10px;border-left:2px solid var(--dim);background:rgba(255,34,68,.04);
-  margin-bottom:5px;font-size:8px;letter-spacing:.08em;line-height:1.5}
-.alert-item.warn{border-color:var(--a);background:rgba(255,187,0,.05);color:var(--a)}
-.alert-item.alert{border-color:var(--r);background:rgba(255,34,68,.08);color:var(--r2)}
-.alert-time{font-size:6px;color:var(--dimmer);letter-spacing:.1em;float:right}
-.no-alerts{font-size:8px;letter-spacing:.15em;color:var(--dimmer);padding:8px 0;text-align:center}
+/* MODULES */
+.modules{padding:10px 12px;display:grid;grid-template-columns:1fr 1fr;gap:7px}
+.mod{background:rgba(12,0,4,.85);border:1px solid var(--dimmer);padding:9px 11px;position:relative;overflow:hidden}
+.mod::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(255,34,68,.3),transparent);opacity:.5}
+.mhdr{display:flex;align-items:center;gap:5px;margin-bottom:7px}
+.mico{font-size:13px}
+.mtitle{font-size:7px;letter-spacing:.18em;color:var(--dim)}
+.mst{margin-left:auto;font-size:6px;letter-spacing:.12em;color:var(--dimmer)}
+.mst.on{color:var(--r)}.mst.ok{color:var(--g)}
+.mval{font-size:19px;font-family:var(--title);color:var(--r);line-height:1;text-shadow:0 0 12px rgba(255,34,68,.4)}
+.mval.safe{color:var(--g);text-shadow:0 0 10px rgba(0,255,136,.4)}
+.mval.warn{color:var(--a);text-shadow:0 0 10px rgba(255,179,0,.4)}
+.msub{font-size:6px;letter-spacing:.08em;color:var(--dimmer);margin-top:3px}
+.mbar{height:3px;background:rgba(255,34,68,.1);border:1px solid var(--dimmer);margin-top:7px;overflow:hidden}
+.mfill{height:100%;background:linear-gradient(90deg,var(--r2),var(--r));width:0%;transition:width .35s;box-shadow:0 0 5px rgba(255,34,68,.5)}
+.mfill.safe{background:linear-gradient(90deg,var(--g2),var(--g))}
+.mfill.warn{background:linear-gradient(90deg,#aa7700,var(--a))}
+.mlog{font-size:6px;letter-spacing:.06em;color:var(--dimmer);margin-top:5px;line-height:1.5;max-height:36px;overflow-y:auto}
 
-/* ── CONTROLS ── */
-.ctrl-row{padding:8px 12px 16px;display:flex;gap:6px;justify-content:center;flex-wrap:wrap;border-top:1px solid var(--dimmer)}
-.cbtn{padding:9px 18px;font-size:8px;letter-spacing:.2em;border:1px solid var(--dimmer);
-  background:rgba(255,34,68,.03);color:var(--dim);cursor:pointer;font-family:var(--font);transition:all .2s}
-.cbtn.primary{border-color:rgba(255,34,68,.5);color:var(--r);background:rgba(255,34,68,.07);
-  box-shadow:0 0 16px rgba(255,34,68,.1)}
-.cbtn.primary:hover{background:rgba(255,34,68,.12);box-shadow:0 0 24px rgba(255,34,68,.2)}
-.cbtn.active{border-color:var(--r);color:var(--r);background:rgba(255,34,68,.1);
-  box-shadow:0 0 12px rgba(255,34,68,.3)}
-.cbtn.ok{border-color:rgba(0,255,136,.4);color:var(--g);background:rgba(0,255,136,.06)}
-.cbtn:disabled{opacity:.3;cursor:not-allowed}
+/* NETWORK */
+.netwrap{padding:0 12px 10px}
+.nethdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+.netgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(52px,1fr));gap:3px;max-height:110px;overflow-y:auto}
+.ncell{padding:4px 5px;border:1px solid var(--dimmer);background:rgba(0,0,0,.4);font-size:7px;color:var(--dimmer);text-align:center;cursor:pointer;transition:all .12s}
+.ncell.sc{border-color:rgba(255,179,0,.3);color:var(--a);animation:cs .6s infinite}
+@keyframes cs{0%,100%{opacity:1}50%{opacity:.3}}
+.ncell.dev{border-color:rgba(255,34,68,.4);color:var(--r);background:rgba(255,34,68,.06)}
+.ncell.cam{border-color:var(--r);color:var(--r);background:rgba(255,34,68,.14);box-shadow:0 0 8px rgba(255,34,68,.3);font-weight:bold}
+.ncell.safe{border-color:rgba(0,255,136,.15);color:#335544}
 
-.err{margin:0 12px 8px;padding:8px 10px;border:1px solid rgba(255,34,68,.3);
-  background:rgba(255,0,20,.05);font-size:8px;color:var(--r2);letter-spacing:.08em;display:none}
+/* ALERTS */
+.alerts{padding:0 12px 10px}
+.ait{padding:6px 9px;border-left:2px solid var(--dim);background:rgba(255,34,68,.03);margin-bottom:4px;font-size:7px;letter-spacing:.07em;line-height:1.5}
+.ait.w{border-color:var(--a);background:rgba(255,179,0,.04);color:var(--a)}
+.ait.a{border-color:var(--r);background:rgba(255,34,68,.07);color:var(--r2)}
+.at{font-size:6px;color:var(--dimmer);float:right}
+.noal{font-size:7px;letter-spacing:.15em;color:var(--dimmer);padding:8px 0;text-align:center}
 
-.footer{position:relative;z-index:2;margin-top:10px;font-size:7px;color:#330011;letter-spacing:.2em;text-align:center}
+/* CONTROLS */
+.ctrlrow{padding:8px 12px 16px;display:flex;gap:5px;justify-content:center;flex-wrap:wrap;border-top:1px solid var(--dimmer)}
+.cb{padding:8px 15px;font-size:7px;letter-spacing:.18em;border:1px solid var(--dimmer);background:rgba(255,34,68,.02);color:var(--dim);cursor:pointer;font-family:var(--font);transition:all .2s}
+.cb.prim{border-color:rgba(255,34,68,.55);color:var(--r);background:rgba(255,34,68,.07);box-shadow:0 0 14px rgba(255,34,68,.1)}
+.cb.act{border-color:var(--r);color:var(--r);background:rgba(255,34,68,.1);box-shadow:0 0 10px rgba(255,34,68,.25)}
+.cb.ok{border-color:rgba(0,255,136,.4);color:var(--g)}
+.cb:disabled{opacity:.28;cursor:not-allowed}
+.err{margin:0 12px 6px;padding:7px 10px;border:1px solid rgba(255,34,68,.35);background:rgba(255,0,20,.05);font-size:8px;color:var(--r2);display:none}
+.footer{position:relative;z-index:2;margin-top:10px;font-size:6px;color:#2a0008;letter-spacing:.2em;text-align:center}
 </style>
 </head>
 <body>
-<div class="grid"></div>
-<div class="scan-line"></div>
+<div class="grid"></div><div class="scanl"></div>
 
-<div class="hdr" style="position:relative;z-index:2">
-  <div class="hdr-badges">
-    <div class="badge">SPECTER v1.0</div>
-    <div class="badge live" id="liveBadge">● STANDBY</div>
-    <div class="badge">SENTINEL SECURITY</div>
+<div class="hdr">
+  <div class="hdr-row">
+    <div class="hbadge">SPECTER v2.0</div>
+    <div class="hbadge live" id="liveBadge">STANDBY</div>
+    <div class="hbadge">SENTINEL SECURITY</div>
   </div>
   <h1>SPECTER</h1>
-  <div class="sub">HIDDEN CAMERA DETECTION SYSTEM</div>
-  <div class="hdr-line"></div>
+  <div class="sub">ADVANCED HIDDEN CAMERA DETECTION & IDENTIFICATION</div>
+  <div class="hline"></div>
 </div>
 
-<div class="panel" style="margin-top:12px">
-  <div class="corner tl"></div><div class="corner tr"></div>
-  <div class="corner bl"></div><div class="corner br"></div>
+<div class="panel" style="margin-top:10px">
+  <div class="cn tl"></div><div class="cn tr"></div><div class="cn bl"></div><div class="cn br"></div>
 
-  <!-- STATUS BAR -->
-  <div class="statusbar">
-    <div class="seg hi">
-      <div class="sdot" id="sysDot"></div>
-      <span class="sl">SYSTEM</span>
-      <span class="sv r" id="sysTxt">OFFLINE</span>
-    </div>
-    <div class="seg">
-      <span class="sl">IR SPOTS</span>
-      <span class="sv r" id="irCount">0</span>
-    </div>
-    <div class="seg">
-      <span class="sl">MAG DELTA</span>
-      <span class="sv" id="magDelta">--</span>
-    </div>
-    <div class="seg">
-      <span class="sl">RF NOISE</span>
-      <span class="sv" id="rfNoise">--</span>
-    </div>
-    <div class="seg">
-      <span class="sl">NET DEVICES</span>
-      <span class="sv" id="netCount">--</span>
-    </div>
-    <div class="threat-badge" id="threatBadge">// STANDBY</div>
+  <!-- STATUS -->
+  <div class="sb">
+    <div class="seg hi"><div class="dot" id="sysDot"></div><span class="sl">SYSTEM</span><span class="sv r" id="sysTxt">OFFLINE</span></div>
+    <div class="seg"><span class="sl">IR</span><span class="sv r" id="irCount">0</span></div>
+    <div class="seg"><span class="sl">CONFIDENCE</span><span class="sv" id="confV">--</span></div>
+    <div class="seg"><span class="sl">DISTANCE</span><span class="sv a" id="distV">--</span></div>
+    <div class="seg"><span class="sl">RF</span><span class="sv" id="rfV">--</span></div>
+    <div class="seg"><span class="sl">NET</span><span class="sv" id="netV">--</span></div>
+    <div class="tbadge" id="tbadge">// STANDBY</div>
   </div>
 
-  <div class="err" id="errBanner"></div>
+  <div class="err" id="errB"></div>
 
   <!-- CAMERA FEED -->
-  <div class="cam-wrap" id="camWrap">
-    <div class="cam-off" id="camOff">
-      <div class="cam-off-icon">📷</div>
-      <div class="cam-off-txt">CAMERA OFFLINE — TAP SCAN TO ACTIVATE</div>
+  <div class="camwrap">
+    <div class="camoff" id="camoff">
+      <div class="camoff-ico">📷</div>
+      <div class="camoff-txt">CAMERA OFFLINE — TAP SCAN TO ACTIVATE</div>
     </div>
-    <video id="camFeed" autoplay playsinline muted style="display:none"></video>
-    <canvas id="irOverlay"></canvas>
-    <div class="cam-hud">
-      <div class="hud-pill">IR SCAN MODE</div>
-      <div class="hud-pill" id="camModePill">REAR CAM</div>
+    <video id="cam" autoplay playsinline muted style="display:none"></video>
+    <canvas id="iro"></canvas>
+    <div class="camhud">
+      <div class="hudpill" id="modePill">IR SCAN</div>
+      <div class="hudpill" id="framePill">FRAME 0</div>
+      <div class="hudpill" id="camPill">REAR</div>
     </div>
-    <div class="cam-crosshair" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%)">
-      <div style="width:40px;height:40px;border:1px solid rgba(255,34,68,.4);position:relative">
-        <div style="position:absolute;top:-6px;left:-6px;width:10px;height:10px;border-top:1px solid var(--r);border-left:1px solid var(--r)"></div>
-        <div style="position:absolute;top:-6px;right:-6px;width:10px;height:10px;border-top:1px solid var(--r);border-right:1px solid var(--r)"></div>
-        <div style="position:absolute;bottom:-6px;left:-6px;width:10px;height:10px;border-bottom:1px solid var(--r);border-left:1px solid var(--r)"></div>
-        <div style="position:absolute;bottom:-6px;right:-6px;width:10px;height:10px;border-bottom:1px solid var(--r);border-right:1px solid var(--r)"></div>
-      </div>
-    </div>
+    <div class="confidence-hud" id="confHud"></div>
   </div>
 
   <!-- HOTSPOT BAR -->
-  <div class="hotspot-bar">
-    <span class="hs-count" id="hsCount">0</span>
-    <span class="hs-label">IR HOTSPOTS DETECTED</span>
+  <div class="hsbar">
+    <span class="hscnt" id="hsCnt">0</span>
+    <span class="hslbl">PERSISTENT IR HOTSPOTS</span>
     <div id="hsPills" style="display:flex;gap:4px;flex-wrap:wrap"></div>
-    <span style="margin-left:auto;font-size:7px;letter-spacing:.1em;color:var(--dimmer)" id="lensHint"></span>
+    <span style="margin-left:auto;font-size:7px;color:var(--dimmer)" id="hintTxt"></span>
   </div>
 
-  <!-- SCAN MODULES -->
+  <!-- PINPOINT PANEL -->
+  <div class="pinpoint" id="pinpointPanel">
+    <div class="pp-title">⊕ CAMERA PINPOINTED</div>
+    <div class="pp-grid">
+      <div class="pp-card"><div class="pp-val" id="ppX">--</div><div class="pp-lbl">HORIZONTAL %</div></div>
+      <div class="pp-card"><div class="pp-val" id="ppY">--</div><div class="pp-lbl">VERTICAL %</div></div>
+      <div class="pp-card"><div class="pp-val" id="ppDist">--</div><div class="pp-lbl">EST. DISTANCE</div></div>
+      <div class="pp-card"><div class="pp-val" id="ppAngle">--</div><div class="pp-lbl">BEARING</div></div>
+      <div class="pp-card"><div class="pp-val" id="ppLeds">--</div><div class="pp-lbl">IR LED COUNT</div></div>
+      <div class="pp-card"><div class="pp-val" id="ppConf">--</div><div class="pp-lbl">CONFIDENCE</div></div>
+    </div>
+    <div class="brand-result" id="brandResult" style="display:none">
+      <div class="brand-name" id="brandName">--</div>
+      <div class="brand-sub" id="brandSub">--</div>
+      <div class="brand-conf" id="brandConf">--</div>
+    </div>
+  </div>
+
+  <!-- LIVE FEED FROM DETECTED CAMERA -->
+  <div class="camfeed-panel" id="camFeedPanel">
+    <div class="camfeed-hdr">
+      <span>📹 LIVE FEED — DETECTED CAMERA</span>
+      <span id="camFeedInfo" style="font-size:7px;color:var(--dim)">--</span>
+    </div>
+    <div class="camfeed-body">
+      <img id="camfeedimg" style="display:none" alt="camera feed"/>
+      <video id="camfeedvid" autoplay muted playsinline style="display:none"></video>
+      <div class="camfeed-msg" id="camFeedMsg">Attempting to access camera stream...</div>
+    </div>
+    <div class="camfeed-controls">
+      <button class="cb ok" onclick="refreshCamFeed()">↺ REFRESH STREAM</button>
+      <button class="cb" onclick="tryNextStream()">→ NEXT STREAM URL</button>
+      <button class="cb" id="snapBtn" onclick="snapFeed()">📸 SNAPSHOT</button>
+    </div>
+  </div>
+
+  <!-- MODULES -->
   <div class="modules">
-
-    <!-- IR / LENS REFLECTION MODULE -->
-    <div class="module">
-      <div class="mod-header">
-        <span class="mod-icon">👁</span>
-        <span class="mod-title">IR DETECTION</span>
-        <span class="mod-status active" id="irStatus">SCANNING</span>
-      </div>
-      <div class="mod-val safe" id="irVal">CLEAR</div>
-      <div class="mod-sub" id="irSub">Scanning for IR LED hotspots</div>
-      <div class="mod-bar"><div class="mod-fill safe" id="irBar"></div></div>
-      <div class="mod-log" id="irLog">// Awaiting camera feed</div>
+    <div class="mod">
+      <div class="mhdr"><span class="mico">👁</span><span class="mtitle">IR PERSISTENCE</span><span class="mst on" id="irSt">SCANNING</span></div>
+      <div class="mval safe" id="irVal">CLEAR</div>
+      <div class="msub" id="irSub">Temporal IR hotspot tracking</div>
+      <div class="mbar"><div class="mfill safe" id="irBar"></div></div>
+      <div class="mlog" id="irLog">// Awaiting camera</div>
     </div>
-
-    <!-- MAGNETOMETER MODULE -->
-    <div class="module">
-      <div class="mod-header">
-        <span class="mod-icon">🧲</span>
-        <span class="mod-title">MAGNETIC FIELD</span>
-        <span class="mod-status" id="magStatus">OFFLINE</span>
-      </div>
-      <div class="mod-val safe" id="magVal">--</div>
-      <div class="mod-sub" id="magSub">Hidden cameras emit EM fields</div>
-      <div class="mod-bar"><div class="mod-fill safe" id="magBar"></div></div>
-      <div class="mod-log" id="magLog">// Magnetometer not yet started</div>
+    <div class="mod">
+      <div class="mhdr"><span class="mico">🧲</span><span class="mtitle">EM FIELD</span><span class="mst" id="magSt">OFFLINE</span></div>
+      <div class="mval safe" id="magVal">--</div>
+      <div class="msub">Hidden cameras emit EM fields</div>
+      <div class="mbar"><div class="mfill safe" id="magBar"></div></div>
+      <div class="mlog" id="magLog">// Not started</div>
     </div>
-
-    <!-- RF NOISE MODULE -->
-    <div class="module">
-      <div class="mod-header">
-        <span class="mod-icon">📡</span>
-        <span class="mod-title">RF INTERFERENCE</span>
-        <span class="mod-status" id="rfStatus">OFFLINE</span>
-      </div>
-      <div class="mod-val safe" id="rfVal">--</div>
-      <div class="mod-sub">High-freq noise = transmitting device</div>
-      <div class="mod-bar"><div class="mod-fill safe" id="rfBar"></div></div>
-      <div class="mod-log" id="rfLog">// RF scan offline</div>
+    <div class="mod">
+      <div class="mhdr"><span class="mico">📡</span><span class="mtitle">RF INTERFERENCE</span><span class="mst" id="rfSt">OFFLINE</span></div>
+      <div class="mval safe" id="rfVal">--</div>
+      <div class="msub">Wireless camera RF footprint</div>
+      <div class="mbar"><div class="mfill safe" id="rfBar"></div></div>
+      <div class="mlog" id="rfLog">// Not started</div>
     </div>
-
-    <!-- BLINK / FLASH DETECTOR -->
-    <div class="module">
-      <div class="mod-header">
-        <span class="mod-icon">⚡</span>
-        <span class="mod-title">LENS REFLECTION</span>
-        <span class="mod-status" id="lensStatus">OFFLINE</span>
-      </div>
-      <div class="mod-val safe" id="lensVal">--</div>
-      <div class="mod-sub">Retroreflective camera lens glow</div>
-      <div class="mod-bar"><div class="mod-fill safe" id="lensBar"></div></div>
-      <div class="mod-log" id="lensLog">// Flash scan offline</div>
-    </div>
-
-  </div>
-
-  <!-- NETWORK SCAN -->
-  <div class="net-wrap">
-    <div class="net-header">
-      <span style="font-size:8px;letter-spacing:.2em;color:var(--dim)">🌐 NETWORK DEVICE SCAN</span>
-      <span style="font-size:7px;letter-spacing:.1em;color:var(--dimmer)" id="netProgress">// IDLE</span>
-    </div>
-    <div class="net-grid" id="netGrid">
-      <div style="font-size:7px;color:var(--dimmer);letter-spacing:.1em;grid-column:1/-1;padding:8px 0;text-align:center">
-        // TAP SCAN TO PROBE LOCAL NETWORK
-      </div>
+    <div class="mod">
+      <div class="mhdr"><span class="mico">⚡</span><span class="mtitle">LENS REFLECTION</span><span class="mst" id="lensSt">OFFLINE</span></div>
+      <div class="mval safe" id="lensVal">--</div>
+      <div class="msub">Retroreflective lens glint</div>
+      <div class="mbar"><div class="mfill safe" id="lensBar"></div></div>
+      <div class="mlog" id="lensLog">// Flash scan offline</div>
     </div>
   </div>
 
-  <!-- ALERT FEED -->
-  <div class="alert-feed">
-    <div style="font-size:7px;letter-spacing:.25em;color:var(--dimmer);margin-bottom:8px">ALERT FEED</div>
-    <div id="alertFeed">
-      <div class="no-alerts">// NO ALERTS — SYSTEM STANDBY</div>
+  <!-- NETWORK -->
+  <div class="netwrap">
+    <div class="nethdr">
+      <span style="font-size:7px;letter-spacing:.2em;color:var(--dim)">🌐 NETWORK CAMERA SCAN</span>
+      <span style="font-size:6px;letter-spacing:.08em;color:var(--dimmer)" id="netProg">// IDLE</span>
     </div>
+    <div class="netgrid" id="netGrid">
+      <div style="font-size:7px;color:var(--dimmer);letter-spacing:.1em;grid-column:1/-1;padding:6px 0;text-align:center">// TAP NET SCAN</div>
+    </div>
+  </div>
+
+  <!-- ALERTS -->
+  <div class="alerts">
+    <div style="font-size:7px;letter-spacing:.22em;color:var(--dimmer);margin-bottom:6px">ALERT FEED</div>
+    <div id="alertFeed"><div class="noal">// STANDBY — NO ALERTS</div></div>
   </div>
 
   <!-- CONTROLS -->
-  <div class="ctrl-row">
-    <button class="cbtn primary" id="scanBtn" onclick="toggleScan()">▶ BEGIN SCAN</button>
-    <button class="cbtn" id="camFlipBtn" onclick="flipCam()" disabled>⟳ FLIP CAM</button>
-    <button class="cbtn" id="netScanBtn" onclick="scanNetwork()" disabled>🌐 NET SCAN</button>
-    <button class="cbtn" id="flashScanBtn" onclick="runFlashScan()" disabled>⚡ FLASH SCAN</button>
-    <button class="cbtn" onclick="clearAlerts()">✕ CLEAR LOG</button>
+  <div class="ctrlrow">
+    <button class="cb prim" id="scanBtn" onclick="toggleScan()">▶ BEGIN SCAN</button>
+    <button class="cb" id="flipBtn" onclick="flipCam()" disabled>⟳ FLIP</button>
+    <button class="cb" id="netBtn" onclick="scanNetwork()" disabled>🌐 NET SCAN</button>
+    <button class="cb" id="flashBtn" onclick="runFlashScan()" disabled>⚡ FLASH</button>
+    <button class="cb" onclick="clearAll()">✕ CLEAR</button>
   </div>
 </div>
 
-<div class="footer">SPECTER v1.0 // IR DETECTION · MAGNETIC · RF · NETWORK · LENS REFLECTION // SENTINEL SECURITY</div>
+<div class="footer">SPECTER v2.0 // IR PERSISTENCE · EM FIELD · RF · NETWORK FINGERPRINT · LENS REFLECTION · BRAND ID</div>
 
 <script>
-// ══ STATE ═══════════════════════════════════════════
+// ═══════════════════════════════════════════════════════
+// BRAND DATABASE — IR LED patterns, port signatures, headers
+// ═══════════════════════════════════════════════════════
+const BRAND_DB = {
+  hikvision: {
+    name: 'Hikvision',
+    irPattern: 'ring', ledRange: [6,36], ledColor: 'warm',
+    ports: [80,8000,8080,554],
+    paths: ['/ISAPI/Security/userCheck','/doc/page/login.asp'],
+    headers: ['DNVRS-Webs','Hikvision'],
+    streams: ['/ISAPI/Streaming/channels/101/httpPreview','/video.cgi','/Streaming/Channels/1/httppreview'],
+    desc: 'Dome/Bullet IP camera, 2MP-8MP, H.265+',
+    confidence: 0
+  },
+  dahua: {
+    name: 'Dahua',
+    irPattern: 'array', ledRange: [4,24], ledColor: 'cool',
+    ports: [80,37777,554,443],
+    paths: ['/RPC2','/cgi-bin/magicBox.cgi'],
+    headers: ['DH','Dahua'],
+    streams: ['/cgi-bin/mjpg/video.cgi','/live/0/h264.sdp'],
+    desc: 'Turret/PTZ camera, 2MP-4MP',
+    confidence: 0
+  },
+  axis: {
+    name: 'Axis',
+    irPattern: 'single', ledRange: [1,4], ledColor: 'neutral',
+    ports: [80,443,554],
+    paths: ['/axis-cgi/jpg/image.cgi','/view/viewer_index.shtml'],
+    headers: ['Axis','AXIS'],
+    streams: ['/axis-cgi/mjpg/video.cgi','/axis-cgi/jpg/image.cgi?camera=1'],
+    desc: 'Professional IP camera, PoE',
+    confidence: 0
+  },
+  reolink: {
+    name: 'Reolink',
+    irPattern: 'ring', ledRange: [2,6], ledColor: 'warm',
+    ports: [80,9000,554,1935],
+    paths: ['/cgi-bin/api.cgi'],
+    headers: ['Reolink'],
+    streams: ['/h264Preview_01_main','/flv/videoMain'],
+    desc: 'Consumer IP camera, WiFi',
+    confidence: 0
+  },
+  wyze: {
+    name: 'Wyze',
+    irPattern: 'pair', ledRange: [2,2], ledColor: 'warm',
+    ports: [80,443],
+    paths: ['/'],
+    headers: ['Wyze','TUTK'],
+    streams: [],
+    desc: 'Consumer mini camera, WiFi 2.4GHz',
+    confidence: 0
+  },
+  generic: {
+    name: 'Generic IP Camera',
+    irPattern: 'unknown', ledRange: [1,99], ledColor: 'unknown',
+    ports: [80,8080,554,81,88],
+    paths: ['/','snapshot.jpg','/videostream.cgi'],
+    headers: [],
+    streams: ['/videostream.cgi','/snapshot.jpg','/video','/live/ch0'],
+    desc: 'Unknown manufacturer',
+    confidence: 0
+  }
+};
+
+// Stream URL patterns to try
+const STREAM_PATHS = [
+  '/snapshot.jpg','/snap.jpg','/cgi-bin/snapshot.cgi',
+  '/videostream.cgi','/video.cgi','/mjpg/video.mjpg',
+  '/ISAPI/Streaming/channels/101/httpPreview',
+  '/cgi-bin/mjpg/video.cgi','/axis-cgi/jpg/image.cgi',
+  '/h264Preview_01_main','/live/ch0','/stream',
+  '/video','/live','/cam','/streaming/channels/1'
+];
+
+// ═══════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════════
 let scanning=false, camStream=null, camFacing='environment', rafId=null;
-let magBaseline=null, magHistory=[], rfCtx=null, rfAnalyser=null, rfStream=null;
-let alerts=[], alertId=0, threatLevel=0; // 0=clear 1=warn 2=alert
-let irHotspots=[], lensScore=0;
-let netScanActive=false;
-let frameCount=0;
+let rfCtx=null, rfAnalyser=null, rfStream=null;
+let alerts=[], alertId=0, threatSources={};
+let netScanActive=false, netCamIPs=[];
+let frameCount=0, lastAlpha=null, lastBeta=null, lastGamma=null;
+let magBaseline=null, magHistory=[];
 
-// Canvas for IR analysis
-const vid=document.getElementById('camFeed');
-const overlay=document.getElementById('irOverlay');
-const octx=overlay.getContext('2d');
-const analysisCanvas=document.createElement('canvas');
-const actx=analysisCanvas.getContext('2d');
+// IR persistence tracking
+const PERSISTENCE_FRAMES = 15; // must appear in 15 consecutive frames
+let hotspotTracker = {}; // id -> {frames, lastX, lastY, maxSize, ledCount}
+let confirmedHotspots = [];
+let detectionConfidence = 0;
+let currentStreamIdx = 0;
+let currentCamIP = null;
 
-// ══ CORE SCAN TOGGLE ════════════════════════════════
-async function toggleScan(){
-  if(scanning){stopScan();return;}
+const vid = document.getElementById('cam');
+const overlay = document.getElementById('iro');
+const octx = overlay.getContext('2d');
+const aC = document.createElement('canvas');
+const ax = aC.getContext('2d');
+
+// ═══════════════════════════════════════════════════════
+// CORE SCAN
+// ═══════════════════════════════════════════════════════
+async function toggleScan() {
+  if (scanning) { stopAll(); return; }
   setErr(null);
-  try{
-    // Camera
-    camStream=await navigator.mediaDevices.getUserMedia({
-      video:{facingMode:camFacing,width:{ideal:1280},height:{ideal:720}}
+  try {
+    camStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: camFacing, width: { ideal: 1920 }, height: { ideal: 1080 } }
     });
-    vid.srcObject=camStream;
-    vid.style.display='block';
-    document.getElementById('camOff').style.display='none';
-    // Start modules
+    vid.srcObject = camStream;
+    vid.style.display = 'block';
+    document.getElementById('camoff').style.display = 'none';
     startIRScan();
-    startMagnetometer();
-    startRFScan();
-    scanning=true;
-    document.getElementById('scanBtn').textContent='■ STOP SCAN';
-    document.getElementById('scanBtn').className='cbtn active';
-    document.getElementById('camFlipBtn').disabled=false;
-    document.getElementById('netScanBtn').disabled=false;
-    document.getElementById('flashScanBtn').disabled=false;
-    document.getElementById('sysDot').className='sdot on';
-    document.getElementById('sysTxt').textContent='ACTIVE';
-    document.getElementById('liveBadge').textContent='● SCANNING';
+    startMag();
+    startRF();
+    scanning = true;
+    document.getElementById('scanBtn').textContent = '■ STOP';
+    document.getElementById('scanBtn').className = 'cb act';
+    ['flipBtn','netBtn','flashBtn'].forEach(id => document.getElementById(id).disabled = false);
+    document.getElementById('sysDot').className = 'dot on';
+    document.getElementById('sysTxt').textContent = 'ACTIVE';
+    document.getElementById('liveBadge').textContent = 'SCANNING';
     setThreat(0);
-    addAlert('Scan initiated — all modules active','info');
-  }catch(e){
-    setErr('Camera access denied: '+e.message);
-    addAlert('Camera error: '+e.message,'alert');
+    addAlert('Scan started — temporal IR tracking active', 'info');
+  } catch(e) {
+    setErr('Camera denied: ' + e.message);
   }
 }
 
-function stopScan(){
-  scanning=false;
-  camStream?.getTracks().forEach(t=>t.stop());
-  rfStream?.getTracks().forEach(t=>t.stop());
-  rfCtx?.close();
+function stopAll() {
+  scanning = false;
+  camStream && camStream.getTracks().forEach(t => t.stop());
+  rfStream && rfStream.getTracks().forEach(t => t.stop());
+  rfCtx && rfCtx.close();
   cancelAnimationFrame(rafId);
-  vid.style.display='none';
-  document.getElementById('camOff').style.display='flex';
-  document.getElementById('scanBtn').textContent='▶ BEGIN SCAN';
-  document.getElementById('scanBtn').className='cbtn primary';
-  document.getElementById('camFlipBtn').disabled=true;
-  document.getElementById('netScanBtn').disabled=true;
-  document.getElementById('flashScanBtn').disabled=true;
-  document.getElementById('sysDot').className='sdot';
-  document.getElementById('sysTxt').textContent='OFFLINE';
-  document.getElementById('liveBadge').textContent='● STANDBY';
-  octx.clearRect(0,0,overlay.width,overlay.height);
-  setMod('ir','CLEAR','safe',0,'-- Scan stopped');
-  setMod('mag','--','safe',0,'-- Scan stopped');
-  setMod('rf','--','safe',0,'-- Scan stopped');
-  document.getElementById('irStatus').textContent='OFFLINE';
-  document.getElementById('magStatus').textContent='OFFLINE';
-  document.getElementById('rfStatus').textContent='OFFLINE';
+  vid.style.display = 'none';
+  document.getElementById('camoff').style.display = 'flex';
+  document.getElementById('scanBtn').textContent = '▶ BEGIN SCAN';
+  document.getElementById('scanBtn').className = 'cb prim';
+  ['flipBtn','netBtn','flashBtn'].forEach(id => document.getElementById(id).disabled = true);
+  document.getElementById('sysDot').className = 'dot';
+  document.getElementById('sysTxt').textContent = 'OFFLINE';
+  document.getElementById('liveBadge').textContent = 'STANDBY';
+  hotspotTracker = {}; confirmedHotspots = []; detectionConfidence = 0;
+  octx.clearRect(0, 0, overlay.width, overlay.height);
+  setMod('ir','CLEAR','safe',0,'Scan stopped');
+  setMod('mag','--','safe',0,'Scan stopped');
+  setMod('rf','--','safe',0,'Scan stopped');
+  document.getElementById('pinpointPanel').style.display = 'none';
+  document.getElementById('camFeedPanel').style.display = 'none';
   setThreat(0);
 }
 
-async function flipCam(){
-  camFacing=camFacing==='environment'?'user':'environment';
-  document.getElementById('camModePill').textContent=camFacing==='environment'?'REAR CAM':'FRONT CAM';
-  if(scanning){
-    camStream?.getTracks().forEach(t=>t.stop());
+async function flipCam() {
+  camFacing = camFacing === 'environment' ? 'user' : 'environment';
+  document.getElementById('camPill').textContent = camFacing === 'environment' ? 'REAR' : 'FRONT';
+  if (scanning) {
+    camStream && camStream.getTracks().forEach(t => t.stop());
     cancelAnimationFrame(rafId);
-    camStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:camFacing,width:{ideal:1280},height:{ideal:720}}});
-    vid.srcObject=camStream;
+    camStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: camFacing, width: { ideal: 1920 }, height: { ideal: 1080 } }
+    });
+    vid.srcObject = camStream;
     startIRScan();
   }
 }
 
-// ══ IR HOTSPOT DETECTION ════════════════════════════
-// Camera sensors pick up near-IR (850nm) that human eyes can't see.
-// Hidden cameras almost always have IR LEDs for night vision — they show as
-// bright white/purple spots on mobile cameras. We threshold the R+B channels
-// and look for circular bright regions.
-function startIRScan(){
-  document.getElementById('irStatus').textContent='SCANNING';
-  irHotspots=[];
-  function frame(){
-    if(!scanning){return;}
+// ═══════════════════════════════════════════════════════
+// IR DETECTION — TEMPORAL PERSISTENCE ENGINE
+// ═══════════════════════════════════════════════════════
+function startIRScan() {
+  document.getElementById('irSt').textContent = 'SCANNING';
+  hotspotTracker = {};
+  confirmedHotspots = [];
+
+  function frame() {
+    if (!scanning) return;
     frameCount++;
-    if(vid.readyState>=2){
-      const W=vid.videoWidth,H=vid.videoHeight;
-      if(!W||!H){rafId=requestAnimationFrame(frame);return;}
-      analysisCanvas.width=W;analysisCanvas.height=H;
-      overlay.width=overlay.offsetWidth*devicePixelRatio||W;
-      overlay.height=overlay.offsetHeight*devicePixelRatio||H;
-      actx.drawImage(vid,0,0,W,H);
-      const img=actx.getImageData(0,0,W,H);
-      const d=img.data;
-      const found=[];
-      const thresh=240; // near-IR appears very bright
-      const step=4; // sample every 4th pixel for speed
-      for(let y=0;y<H;y+=step){
-        for(let x=0;x<W;x+=step){
-          const i=(y*W+x)*4;
-          const r=d[i],g=d[i+1],b=d[i+2];
-          // IR shows as high R+B with suppressed G (purple/white bloom)
-          // or pure white. Key signature: R>240 && B>200 && G<230
-          const irSig=(r>thresh&&b>180&&g<240)||(r>thresh&&g>thresh&&b>thresh);
-          if(irSig){
-            found.push({x,y,r,g,b,brightness:(r+g+b)/3});
-          }
-        }
+    document.getElementById('framePill').textContent = 'FRAME ' + frameCount;
+
+    if (vid.readyState < 2) { rafId = requestAnimationFrame(frame); return; }
+    const W = vid.videoWidth, H = vid.videoHeight;
+    if (!W || !H) { rafId = requestAnimationFrame(frame); return; }
+
+    aC.width = W; aC.height = H;
+    overlay.width = (overlay.offsetWidth || W) * (window.devicePixelRatio || 1);
+    overlay.height = (overlay.offsetHeight || H) * (window.devicePixelRatio || 1);
+    ax.drawImage(vid, 0, 0, W, H);
+
+    const img = ax.getImageData(0, 0, W, H);
+    const d = img.data;
+    const raw = [];
+
+    // Multi-threshold IR detection
+    // Threshold 1: IR signature (high R+B, low-mid G) — classic IR LED look
+    // Threshold 2: Pure white bloom (all channels maxed — bright IR overexposure)
+    // Threshold 3: Purple/violet tone (near-IR at 850nm appears purple on phone sensors)
+    for (let y = 0; y < H; y += 3) {
+      for (let x = 0; x < W; x += 3) {
+        const i = (y * W + x) * 4;
+        const r = d[i], g = d[i+1], b = d[i+2];
+        const bright = (r + g + b) / 3;
+        // IR signature scoring
+        const irScore =
+          ((r > 235 && b > 160 && g < 230) ? 1.0 : 0) +   // purple IR
+          ((r > 245 && g > 245 && b > 245) ? 0.8 : 0) +   // white bloom
+          ((r > 220 && b > 200 && g < 200) ? 0.9 : 0) +   // violet IR
+          ((bright > 240 && r > g * 1.1) ? 0.6 : 0);       // bright warm
+        if (irScore >= 0.8) raw.push({ x, y, score: irScore });
       }
-      // Cluster nearby pixels into hotspots
-      const clusters=clusterPoints(found,30);
-      irHotspots=clusters;
-      const count=clusters.length;
-      document.getElementById('irCount').textContent=count;
-      document.getElementById('hsCount').textContent=count;
-      // Draw overlay
-      octx.clearRect(0,0,overlay.width,overlay.height);
-      const scaleX=overlay.width/W,scaleY=overlay.height/H;
-      clusters.forEach((c,i)=>{
-        const cx=c.x*scaleX,cy=c.y*scaleY;
-        const radius=20+c.size*2;
-        // Pulsing ring
-        const pulse=(Math.sin(frameCount*.08+i*1.5)*.5+.5);
-        octx.strokeStyle=`rgba(255,34,68,${.5+pulse*.4})`;
-        octx.lineWidth=1.5;
-        octx.beginPath();octx.arc(cx,cy,radius*(1+pulse*.15),0,Math.PI*2);octx.stroke();
-        octx.strokeStyle=`rgba(255,100,100,${.3+pulse*.3})`;
-        octx.lineWidth=1;
-        octx.beginPath();octx.arc(cx,cy,radius*.6,0,Math.PI*2);octx.stroke();
-        // Label
-        octx.fillStyle='rgba(255,34,68,.9)';
-        octx.font=`bold ${7*devicePixelRatio}px 'Share Tech Mono'`;
-        octx.textAlign='center';
-        octx.fillText(`IR#${i+1}`,cx,cy-radius-4);
-        // Crosshair
-        octx.strokeStyle='rgba(255,34,68,.6)';octx.lineWidth=1;
-        octx.beginPath();octx.moveTo(cx-radius*.3,cy);octx.lineTo(cx+radius*.3,cy);octx.stroke();
-        octx.beginPath();octx.moveTo(cx,cy-radius*.3);octx.lineTo(cx,cy+radius*.3);octx.stroke();
+    }
+
+    // Cluster raw detections
+    const currentClusters = clusterPoints(raw, 25);
+
+    // ── TEMPORAL PERSISTENCE ──
+    // Age out old trackers
+    const activeIds = new Set();
+    currentClusters.forEach((c, i) => {
+      // Find matching tracker (within 60px)
+      let bestId = null, bestDist = Infinity;
+      Object.keys(hotspotTracker).forEach(id => {
+        const t = hotspotTracker[id];
+        const dx = c.x - t.lastX, dy = c.y - t.lastY;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        if (dist < 60 && dist < bestDist) { bestDist = dist; bestId = id; }
       });
-      // Update UI
-      if(count===0){
-        setMod('ir','CLEAR','safe',0,'No IR hotspots detected');
-        document.getElementById('irLog').textContent='// Frame '+frameCount+' — clean';
-      } else if(count<=2){
-        setMod('ir',count+' SPOTS','warn',count*30,'IR hotspot'+( count>1?'s':'')+' detected — inspect area');
-        pushThreat(1,'ir','IR hotspot detected at position '+clusters.map(c=>`(${Math.round(c.x/W*100)}%,${Math.round(c.y/H*100)}%)`).join(', '));
+      if (bestId) {
+        hotspotTracker[bestId].frames++;
+        hotspotTracker[bestId].lastX = c.x;
+        hotspotTracker[bestId].lastY = c.y;
+        hotspotTracker[bestId].maxSize = Math.max(hotspotTracker[bestId].maxSize, c.size);
+        hotspotTracker[bestId].avgScore = (hotspotTracker[bestId].avgScore + c.avgScore) / 2;
+        activeIds.add(bestId);
       } else {
-        setMod('ir',count+' SPOTS','alert',Math.min(100,count*20),'MULTIPLE IR SOURCES — possible camera array');
-        pushThreat(2,'ir','MULTIPLE IR HOTSPOTS: '+count+' sources detected');
+        const newId = 'hs' + Date.now() + i;
+        hotspotTracker[newId] = {
+          frames: 1, lastX: c.x, lastY: c.y,
+          maxSize: c.size, avgScore: c.avgScore || 1,
+          firstSeen: frameCount
+        };
+        activeIds.add(newId);
       }
-      // Update hotspot pills
-      const pills=document.getElementById('hsPills');
-      pills.innerHTML='';
-      clusters.slice(0,6).forEach((c,i)=>{
-        const p=document.createElement('div');p.className='hs-pill';
-        p.textContent=`#${i+1} (${Math.round(c.x/W*100)}%,${Math.round(c.y/H*100)}%)`;
-        pills.appendChild(p);
+    });
+    // Decay inactive trackers
+    Object.keys(hotspotTracker).forEach(id => {
+      if (!activeIds.has(id)) {
+        hotspotTracker[id].frames = Math.max(0, hotspotTracker[id].frames - 2);
+        if (hotspotTracker[id].frames === 0) delete hotspotTracker[id];
+      }
+    });
+
+    // Confirmed = persisted >= PERSISTENCE_FRAMES
+    confirmedHotspots = Object.entries(hotspotTracker)
+      .filter(([id, t]) => t.frames >= PERSISTENCE_FRAMES)
+      .map(([id, t]) => ({ id, ...t }))
+      .sort((a, b) => b.frames - a.frames);
+
+    const count = confirmedHotspots.length;
+    document.getElementById('irCount').textContent = count;
+    document.getElementById('hsCnt').textContent = count;
+
+    // ── DRAW OVERLAY ──
+    octx.clearRect(0, 0, overlay.width, overlay.height);
+    const sx = overlay.width / W, sy = overlay.height / H;
+
+    // Draw raw detections (faint)
+    raw.forEach(p => {
+      octx.fillStyle = 'rgba(255,34,68,' + (p.score * 0.08) + ')';
+      octx.fillRect(p.x * sx - 1, p.y * sy - 1, 3, 3);
+    });
+
+    // Draw confirmed hotspots with full targeting UI
+    confirmedHotspots.forEach((t, i) => {
+      const cx = t.lastX * sx, cy = t.lastY * sy;
+      const persistFactor = Math.min(1, t.frames / 30);
+      const radius = 28 + t.maxSize * 1.5;
+      const pulse = Math.sin(frameCount * 0.1 + i * 2.1) * 0.5 + 0.5;
+
+      // Outer pulsing ring
+      octx.strokeStyle = 'rgba(255,34,68,' + (0.4 + pulse * 0.5) + ')';
+      octx.lineWidth = 1.5;
+      octx.beginPath(); octx.arc(cx, cy, radius * (1 + pulse * 0.12), 0, Math.PI * 2); octx.stroke();
+
+      // Inner ring
+      octx.strokeStyle = 'rgba(255,100,100,' + (0.3 + pulse * 0.4) + ')';
+      octx.lineWidth = 1;
+      octx.beginPath(); octx.arc(cx, cy, radius * 0.55, 0, Math.PI * 2); octx.stroke();
+
+      // Crosshair lines
+      octx.strokeStyle = 'rgba(255,34,68,' + (0.5 + persistFactor * 0.4) + ')';
+      octx.lineWidth = 1;
+      const cl = radius * 1.6;
+      [[cx - cl, cy, cx - radius * 1.05, cy],
+       [cx + radius * 1.05, cy, cx + cl, cy],
+       [cx, cy - cl, cx, cy - radius * 1.05],
+       [cx, cy + radius * 1.05, cx, cy + cl]].forEach(([x1,y1,x2,y2]) => {
+        octx.beginPath(); octx.moveTo(x1, y1); octx.lineTo(x2, y2); octx.stroke();
+      });
+
+      // Corner brackets
+      const bSize = 10;
+      [[-1,-1],[1,-1],[-1,1],[1,1]].forEach(([sx2, sy2]) => {
+        const bx = cx + sx2 * radius * 1.05;
+        const by = cy + sy2 * radius * 1.05;
+        octx.strokeStyle = 'rgba(255,34,68,' + (0.7 + persistFactor * 0.3) + ')';
+        octx.lineWidth = 2;
+        octx.beginPath(); octx.moveTo(bx, by); octx.lineTo(bx + sx2 * bSize, by); octx.stroke();
+        octx.beginPath(); octx.moveTo(bx, by); octx.lineTo(bx, by + sy2 * bSize); octx.stroke();
+      });
+
+      // Glow fill
+      const grd = octx.createRadialGradient(cx, cy, 0, cx, cy, radius * 0.6);
+      grd.addColorStop(0, 'rgba(255,34,68,' + (0.06 + persistFactor * 0.08) + ')');
+      grd.addColorStop(1, 'rgba(255,34,68,0)');
+      octx.fillStyle = grd;
+      octx.beginPath(); octx.arc(cx, cy, radius * 0.6, 0, Math.PI * 2); octx.fill();
+
+      // Label
+      octx.fillStyle = 'rgba(0,0,0,0.75)';
+      octx.fillRect(cx - 32, cy - radius - 18, 64, 14);
+      octx.fillStyle = 'rgba(255,34,68,' + (0.8 + persistFactor * 0.2) + ')';
+      octx.font = 'bold 8px monospace';
+      octx.textAlign = 'center';
+      octx.fillText('IR#' + (i+1) + ' [' + t.frames + 'f]', cx, cy - radius - 7);
+
+      // Position label
+      const posX = Math.round(t.lastX / W * 100);
+      const posY = Math.round(t.lastY / H * 100);
+      octx.fillStyle = 'rgba(255,179,0,0.85)';
+      octx.font = '7px monospace';
+      octx.fillText(posX + '% ' + posY + '%', cx, cy + radius + 12);
+    });
+
+    // ── UPDATE UI ──
+    if (count === 0) {
+      setMod('ir', 'CLEAR', 'safe', 0, 'No persistent IR sources (' + frameCount + ' frames)');
+      document.getElementById('irLog').textContent = 'Tracking ' + Object.keys(hotspotTracker).length + ' candidates...';
+      document.getElementById('pinpointPanel').style.display = 'none';
+      detectionConfidence = Math.max(0, detectionConfidence - 2);
+    } else {
+      const t = confirmedHotspots[0];
+      const pct = Math.min(100, t.frames * 3);
+      setMod('ir', count + ' CAM' + (count > 1 ? 'S' : ''), count > 1 ? 'alert' : 'warn', pct, count + ' persistent IR source' + (count > 1 ? 's' : '') + ' — ' + t.frames + ' frames');
+      document.getElementById('irLog').textContent = 'Primary @ (' + Math.round(t.lastX/W*100) + '%, ' + Math.round(t.lastY/H*100) + '%), ' + t.frames + ' frames persistent';
+      // Pinpoint
+      updatePinpoint(confirmedHotspots, W, H);
+      pushThreat(count > 1 ? 2 : 1, 'ir', count + ' persistent IR hotspot' + (count>1?'s':'') + ' detected');
+      detectionConfidence = Math.min(100, detectionConfidence + 3);
+    }
+
+    // Confidence meter
+    document.getElementById('confV').textContent = detectionConfidence + '%';
+    document.getElementById('confV').className = 'sv' + (detectionConfidence > 70 ? ' r' : detectionConfidence > 40 ? ' a' : '');
+
+    // Confidence HUD pills
+    const hud = document.getElementById('confHud');
+    hud.innerHTML = '';
+    if (confirmedHotspots.length > 0) {
+      confirmedHotspots.slice(0, 3).forEach((t, i) => {
+        const conf = Math.min(100, t.frames * 3);
+        const p = document.createElement('div');
+        p.className = 'conf-pill' + (conf > 60 ? ' hi' : '');
+        p.textContent = 'IR#' + (i+1) + ' ' + conf + '% CONF';
+        hud.appendChild(p);
       });
     }
-    rafId=requestAnimationFrame(frame);
+
+    rafId = requestAnimationFrame(frame);
   }
   frame();
 }
 
-function clusterPoints(pts,radius){
-  const clusters=[];
-  const used=new Set();
-  pts.forEach((p,i)=>{
-    if(used.has(i))return;
-    const cluster={x:p.x,y:p.y,size:1,members:[p]};
-    pts.forEach((q,j)=>{
-      if(i===j||used.has(j))return;
-      const dx=p.x-q.x,dy=p.y-q.y;
-      if(Math.sqrt(dx*dx+dy*dy)<radius){cluster.members.push(q);cluster.size++;used.add(j);}
+// ═══════════════════════════════════════════════════════
+// PINPOINT + BRAND IDENTIFICATION
+// ═══════════════════════════════════════════════════════
+function updatePinpoint(hotspots, W, H) {
+  const panel = document.getElementById('pinpointPanel');
+  panel.style.display = 'block';
+  const t = hotspots[0];
+  const posX = Math.round(t.lastX / W * 100);
+  const posY = Math.round(t.lastY / H * 100);
+
+  // Distance estimation based on LED cluster apparent size
+  // A typical IR LED cluster at 1m appears ~50px wide on a 1080p sensor
+  const apparentSize = t.maxSize * 3; // scaled
+  const estDist = apparentSize > 0 ? Math.round(150 / apparentSize * 10) / 10 : 0;
+  const distText = estDist > 0 ? (estDist < 1 ? Math.round(estDist * 100) + 'cm' : estDist.toFixed(1) + 'm') : '--';
+
+  // Bearing from center
+  const dx = posX - 50, dy = posY - 50;
+  const bearingNames = ['CENTER','RIGHT','LOWER-R','DOWN','LOWER-L','LEFT','UPPER-L','UP','UPPER-R'];
+  const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+  const bearing = angle < -157.5 ? 'LEFT' : angle < -112.5 ? 'UPPER-L' : angle < -67.5 ? 'UP' : angle < -22.5 ? 'UPPER-R' :
+                  angle < 22.5 ? 'RIGHT' : angle < 67.5 ? 'LOWER-R' : angle < 112.5 ? 'DOWN' : angle < 157.5 ? 'LOWER-L' : 'LEFT';
+
+  // LED count estimation
+  const ledCount = Math.max(1, Math.round(t.maxSize * 0.8));
+
+  document.getElementById('ppX').textContent = posX + '%';
+  document.getElementById('ppY').textContent = posY + '%';
+  document.getElementById('ppDist').textContent = distText;
+  document.getElementById('ppAngle').textContent = bearing;
+  document.getElementById('ppLeds').textContent = '~' + ledCount;
+  document.getElementById('ppConf').textContent = Math.min(100, t.frames * 3) + '%';
+  document.getElementById('distV').textContent = distText;
+
+  // Brand fingerprinting from IR LED count and pattern
+  identifyBrand(ledCount, t, hotspots.length);
+}
+
+function identifyBrand(ledCount, tracker, totalSources) {
+  // Reset scores
+  Object.values(BRAND_DB).forEach(b => b.confidence = 0);
+
+  // LED count scoring
+  if (ledCount >= 6 && ledCount <= 36) BRAND_DB.hikvision.confidence += 30;
+  if (ledCount >= 4 && ledCount <= 24) BRAND_DB.dahua.confidence += 25;
+  if (ledCount >= 1 && ledCount <= 4)  BRAND_DB.axis.confidence += 20;
+  if (ledCount >= 2 && ledCount <= 6)  BRAND_DB.reolink.confidence += 25;
+  if (ledCount === 2)                   BRAND_DB.wyze.confidence += 35;
+  if (totalSources > 2) BRAND_DB.hikvision.confidence += 15; // multi-cam systems
+
+  // Frame persistence scoring (consumer vs pro)
+  if (tracker.frames > 60) {
+    BRAND_DB.hikvision.confidence += 10;
+    BRAND_DB.dahua.confidence += 10;
+    BRAND_DB.axis.confidence += 15; // pro cameras very stable
+  }
+
+  // Network data boost (if we found it on network)
+  if (currentCamIP) {
+    Object.values(BRAND_DB).forEach(b => b.confidence += 10);
+  }
+
+  // Pick winner
+  const brands = Object.entries(BRAND_DB).filter(([k]) => k !== 'generic');
+  brands.sort((a, b) => b[1].confidence - a[1].confidence);
+  const [bestKey, best] = brands[0];
+  const totalConf = Math.min(95, best.confidence + (tracker.frames > 30 ? 20 : 0));
+
+  const brandResult = document.getElementById('brandResult');
+  if (totalConf > 20) {
+    brandResult.style.display = 'block';
+    document.getElementById('brandName').textContent = best.name;
+    document.getElementById('brandSub').textContent = best.desc + ' // IR Pattern: ' + best.irPattern + ' // ' + best.ledRange[0] + '-' + best.ledRange[1] + ' LEDs';
+    document.getElementById('brandConf').textContent = 'Identification confidence: ' + totalConf + '% (' + bestKey.toUpperCase() + ')';
+    addAlert('Brand signature: likely ' + best.name + ' (' + totalConf + '% confidence)', 'warn');
+  } else {
+    brandResult.style.display = 'block';
+    document.getElementById('brandName').textContent = 'Unknown / Generic';
+    document.getElementById('brandSub').textContent = 'Insufficient data for brand identification';
+    document.getElementById('brandConf').textContent = '~' + ledCount + ' estimated IR LEDs detected';
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// MAGNETOMETER
+// ═══════════════════════════════════════════════════════
+function startMag() {
+  document.getElementById('magSt').textContent = 'STARTING';
+  if (typeof DeviceOrientationEvent !== 'undefined') {
+    if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+      DeviceOrientationEvent.requestPermission()
+        .then(s => { if (s === 'granted') window.addEventListener('deviceorientation', onOrient, true); })
+        .catch(() => {});
+    } else {
+      window.addEventListener('deviceorientation', onOrient, true);
+    }
+    document.getElementById('magSt').textContent = 'ACTIVE';
+    document.getElementById('magSt').className = 'mst on';
+    document.getElementById('magLog').textContent = 'Move device slowly near objects — cameras have ferrite cores';
+  }
+  if ('Magnetometer' in window) {
+    try {
+      const m = new Magnetometer({ frequency: 20 });
+      m.addEventListener('reading', () => {
+        const mag = Math.sqrt(m.x*m.x + m.y*m.y + m.z*m.z);
+        processMag(mag);
+      });
+      m.start();
+      document.getElementById('magLog').textContent = 'Hardware magnetometer active (20Hz)';
+    } catch(e) {}
+  }
+}
+
+function onOrient(e) {
+  if (e.alpha == null || !scanning) return;
+  if (lastAlpha !== null) {
+    const dA = Math.abs(e.alpha - lastAlpha), dB = Math.abs(e.beta - lastBeta), dG = Math.abs(e.gamma - lastGamma);
+    const delta = Math.sqrt(dA*dA + dB*dB + dG*dG);
+    document.getElementById('magLog').textContent = 'Delta: ' + delta.toFixed(2) + '° | Baseline: ' + (magBaseline ? magBaseline.toFixed(2) : '--');
+    if (!magBaseline) { magHistory.push(delta); if (magHistory.length > 25) magBaseline = magHistory.reduce((a,b)=>a+b,0)/magHistory.length; }
+    if (magBaseline) {
+      const ratio = delta / magBaseline;
+      const pct = Math.min(100, ratio * 25);
+      if (ratio > 4) { setMod('mag', delta.toFixed(1)+'°', 'alert', pct, 'STRONG EM ANOMALY — camera/motor nearby'); pushThreat(2, 'mag', 'Strong EM anomaly: ' + delta.toFixed(1) + '° delta'); }
+      else if (ratio > 2.2) { setMod('mag', delta.toFixed(1)+'°', 'warn', pct, 'Elevated EM field detected'); }
+      else { setMod('mag', delta.toFixed(1)+'°', 'safe', Math.min(pct, 20), 'EM field nominal'); }
+    } else { setMod('mag', delta.toFixed(1)+'°', 'safe', 5, 'Calibrating...'); }
+  }
+  lastAlpha = e.alpha; lastBeta = e.beta; lastGamma = e.gamma;
+}
+
+function processMag(mag) {
+  if (!magBaseline) { magHistory.push(mag); if (magHistory.length > 25) magBaseline = magHistory.reduce((a,b)=>a+b,0)/magHistory.length; return; }
+  const diff = Math.abs(mag - magBaseline) / magBaseline;
+  const pct = Math.min(100, diff * 100);
+  if (diff > 0.45) { setMod('mag', Math.round(mag)+'µT', 'alert', pct, 'STRONG MAGNETIC ANOMALY'); pushThreat(2, 'mag', 'EM anomaly: ' + mag.toFixed(0) + 'µT'); }
+  else if (diff > 0.18) { setMod('mag', Math.round(mag)+'µT', 'warn', pct, 'Elevated EM field'); }
+  else { setMod('mag', Math.round(mag)+'µT', 'safe', pct*0.3, 'EM nominal'); }
+}
+
+// ═══════════════════════════════════════════════════════
+// RF SCAN
+// ═══════════════════════════════════════════════════════
+async function startRF() {
+  document.getElementById('rfSt').textContent = 'STARTING';
+  try {
+    rfStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false } });
+    rfCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const src = rfCtx.createMediaStreamSource(rfStream);
+    rfAnalyser = rfCtx.createAnalyser();
+    rfAnalyser.fftSize = 4096;
+    rfAnalyser.smoothingTimeConstant = 0.85;
+    src.connect(rfAnalyser);
+    document.getElementById('rfSt').textContent = 'ACTIVE';
+    document.getElementById('rfSt').className = 'mst on';
+    document.getElementById('rfLog').textContent = 'FFT 4096, monitoring >4kHz band';
+    let baseline = null, buf = [], histBuf = [];
+    function rfTick() {
+      if (!scanning) return;
+      const data = new Uint8Array(rfAnalyser.frequencyBinCount);
+      rfAnalyser.getByteFrequencyData(data);
+      const hfStart = Math.floor(4000 / (rfCtx.sampleRate / 2) * data.length);
+      const vhfStart = Math.floor(8000 / (rfCtx.sampleRate / 2) * data.length);
+      let hfE = 0, vhfE = 0;
+      for (let i = hfStart; i < data.length; i++) hfE += data[i];
+      for (let i = vhfStart; i < data.length; i++) vhfE += data[i];
+      hfE /= (data.length - hfStart) * 255;
+      vhfE /= (data.length - vhfStart) * 255;
+      const combined = hfE * 0.6 + vhfE * 0.4;
+      document.getElementById('rfV').textContent = (hfE * 100).toFixed(1) + '%';
+      buf.push(combined); if (buf.length > 40) buf.shift();
+      if (!baseline && buf.length >= 30) baseline = buf.reduce((a,b)=>a+b,0)/buf.length;
+      if (baseline) {
+        const ratio = combined / baseline;
+        const pct = Math.min(100, ratio * 45);
+        if (ratio > 3.5) { setMod('rf', (hfE*100).toFixed(1)+'%', 'alert', pct, 'HIGH RF — wireless camera transmitting'); pushThreat(1, 'rf', 'RF anomaly: ' + ratio.toFixed(1) + '× baseline'); document.getElementById('rfLog').textContent = ratio.toFixed(1) + '× baseline — wireless device nearby'; }
+        else if (ratio > 2) { setMod('rf', (hfE*100).toFixed(1)+'%', 'warn', pct, 'Elevated RF activity'); document.getElementById('rfLog').textContent = ratio.toFixed(1) + '× baseline'; }
+        else { setMod('rf', (hfE*100).toFixed(1)+'%', 'safe', Math.min(pct, 20), 'RF nominal'); document.getElementById('rfLog').textContent = ratio.toFixed(2) + '× baseline (OK)'; }
+      } else { setMod('rf', (hfE*100).toFixed(1)+'%', 'safe', 5, 'Calibrating RF baseline...'); }
+      setTimeout(rfTick, 80);
+    }
+    rfTick();
+  } catch(e) {
+    document.getElementById('rfLog').textContent = 'Mic not available';
+    document.getElementById('rfSt').textContent = 'NO MIC';
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// FLASH / LENS REFLECTION
+// ═══════════════════════════════════════════════════════
+async function runFlashScan() {
+  if (!scanning) { addAlert('Start scan first', 'warn'); return; }
+  document.getElementById('lensSt').textContent = 'FLASHING';
+  setMod('lens', 'SCANNING', 'warn', 50, 'Flash retroreflection test...');
+  const W = vid.videoWidth, H = vid.videoHeight;
+  aC.width = W; aC.height = H;
+  ax.drawImage(vid, 0, 0, W, H);
+  const before = ax.getImageData(0, 0, W, H);
+  const bAvg = avgBright(before.data);
+  const fl = document.createElement('div');
+  fl.style.cssText = 'position:fixed;inset:0;background:#fff;z-index:9999;pointer-events:none';
+  document.body.appendChild(fl);
+  await delay(180);
+  ax.drawImage(vid, 0, 0, W, H);
+  const during = ax.getImageData(0, 0, W, H);
+  const dAvg = avgBright(during.data);
+  fl.style.transition = 'opacity .15s';
+  fl.style.opacity = '0';
+  setTimeout(() => fl.remove(), 200);
+  const spots = [];
+  const dd = during.data;
+  for (let y = 0; y < H; y += 4) {
+    for (let x = 0; x < W; x += 4) {
+      const i = (y*W+x)*4;
+      if ((dd[i]+dd[i+1]+dd[i+2])/3 > 244) spots.push({ x, y, size: 1 });
+    }
+  }
+  const clusters = clusterPoints(spots, 40);
+  document.getElementById('lensSt').className = 'mst ok';
+  document.getElementById('lensSt').textContent = 'DONE';
+  if (clusters.length > 0) {
+    setMod('lens', clusters.length + ' LENS' + (clusters.length > 1 ? 'ES' : ''), 'alert', Math.min(100, clusters.length * 30), 'RETROREFLECTIVE LENS — likely camera');
+    pushThreat(2, 'lens', clusters.length + ' retroreflective lens' + (clusters.length>1?'es':'') + ' detected');
+    document.getElementById('lensLog').textContent = clusters.length + ' reflector(s) at: ' + clusters.map(c => Math.round(c.x/W*100) + '%,' + Math.round(c.y/H*100) + '%').join(' | ');
+    document.getElementById('hintTxt').textContent = '⚠ LENS GLINT';
+    detectionConfidence = Math.min(100, detectionConfidence + 30);
+  } else {
+    setMod('lens', 'CLEAR', 'safe', 5, 'No retroreflective lenses found');
+    document.getElementById('lensLog').textContent = 'No reflectors (Δ brightness: ' + (dAvg - bAvg).toFixed(1) + ')';
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// NETWORK SCAN + LIVE FEED CAPTURE
+// ═══════════════════════════════════════════════════════
+async function scanNetwork() {
+  if (netScanActive) return;
+  netScanActive = true; netCamIPs = [];
+  document.getElementById('netProg').textContent = 'SCANNING...';
+  const grid = document.getElementById('netGrid'); grid.innerHTML = '';
+  document.getElementById('netV').textContent = '0';
+  let found = 0, cams = 0;
+  let subnet = '192.168.1';
+  try {
+    const pc = new RTCPeerConnection({ iceServers: [] });
+    pc.createDataChannel('');
+    await pc.createOffer().then(o => pc.setLocalDescription(o));
+    await delay(500);
+    const sdp = (pc.localDescription && pc.localDescription.sdp) || '';
+    const m = sdp.match(/([0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+/);
+    if (m) subnet = m[1];
+    pc.close();
+  } catch(e) {}
+
+  document.getElementById('netProg').textContent = 'PROBING ' + subnet + '.x';
+  const targets = [];
+  for (let i = 1; i <= 30; i++) targets.push(subnet + '.' + i);
+  ['192.168.0.1','10.0.0.1','10.0.0.100','172.16.0.1'].forEach(ip => { if (targets.indexOf(ip) < 0) targets.push(ip); });
+
+  await Promise.allSettled(targets.map(async ip => {
+    const cell = document.createElement('div');
+    cell.className = 'ncell sc';
+    cell.textContent = ip.split('.').pop();
+    cell.title = ip; grid.appendChild(cell);
+
+    let alive = false;
+    try {
+      const ctrl = new AbortController();
+      const tid = setTimeout(() => ctrl.abort(), 900);
+      await fetch('http://' + ip + '/', { signal: ctrl.signal, mode: 'no-cors' });
+      clearTimeout(tid); alive = true;
+    } catch(e) { alive = e.name !== 'AbortError' && e.name !== 'TypeError'; }
+
+    if (alive) {
+      found++; document.getElementById('netV').textContent = found;
+      cell.className = 'ncell dev';
+
+      // Fingerprint: try camera-specific paths
+      let brandHit = null;
+      for (const [bKey, brand] of Object.entries(BRAND_DB)) {
+        for (const path of brand.paths) {
+          try {
+            const ctrl2 = new AbortController();
+            const tid2 = setTimeout(() => ctrl2.abort(), 600);
+            await fetch('http://' + ip + path, { signal: ctrl2.signal, mode: 'no-cors' });
+            clearTimeout(tid2);
+            brandHit = brand; break;
+          } catch(e) { if (e.name !== 'AbortError') { brandHit = brand; break; } }
+        }
+        if (brandHit) break;
+      }
+
+      if (brandHit) {
+        cell.className = 'ncell cam';
+        cell.title = ip + ' — ' + (brandHit.name || 'Camera');
+        cams++;
+        netCamIPs.push({ ip, brand: brandHit });
+        pushThreat(2, 'net', 'IP camera found: ' + ip + ' (' + (brandHit.name || 'generic') + ')');
+        addAlert('CAMERA @ ' + ip + ' — ' + (brandHit.name || 'Generic'), 'alert');
+        // Try to pull live feed
+        tryFeedFromIP(ip, brandHit);
+      } else { cell.className = 'ncell dev'; }
+    } else { cell.className = 'ncell safe'; }
+  }));
+
+  document.getElementById('netProg').textContent = found + ' devices, ' + cams + ' cameras';
+  if (!cams) addAlert('Net scan complete — ' + found + ' devices, no cameras', 'info');
+  netScanActive = false;
+}
+
+async function tryFeedFromIP(ip, brand) {
+  const panel = document.getElementById('camFeedPanel');
+  panel.style.display = 'block';
+  currentCamIP = ip;
+  document.getElementById('camFeedInfo').textContent = ip + ' // ' + (brand.name || 'Unknown');
+  document.getElementById('camFeedMsg').textContent = 'Connecting to ' + ip + '...';
+  const img = document.getElementById('camfeedimg');
+  const v = document.getElementById('camfeedvid');
+  img.style.display = 'none'; v.style.display = 'none';
+
+  const streamUrls = brand.streams.length > 0 ? brand.streams : STREAM_PATHS;
+  currentStreamIdx = 0;
+
+  for (const path of streamUrls) {
+    const url = 'http://' + ip + path;
+    try {
+      // Try as image (MJPEG snapshot)
+      await new Promise((resolve, reject) => {
+        const testImg = new Image();
+        testImg.onload = () => {
+          img.src = url + '?t=' + Date.now();
+          img.style.display = 'block';
+          document.getElementById('camFeedMsg').textContent = 'Stream: ' + path;
+          document.getElementById('camFeedMsg').style.display = 'none';
+          addAlert('Live feed from camera @ ' + ip, 'alert');
+          resolve();
+        };
+        testImg.onerror = () => reject();
+        testImg.src = url;
+        setTimeout(reject, 1500);
+      });
+      return;
+    } catch(e) {}
+
+    // Try as video src
+    try {
+      await new Promise((resolve, reject) => {
+        v.src = url;
+        v.oncanplay = () => {
+          v.style.display = 'block';
+          document.getElementById('camFeedMsg').style.display = 'none';
+          addAlert('Video stream from camera @ ' + ip, 'alert');
+          resolve();
+        };
+        v.onerror = () => reject();
+        setTimeout(reject, 1500);
+      });
+      return;
+    } catch(e) {}
+  }
+  document.getElementById('camFeedMsg').textContent = 'Camera requires auth or uses proprietary protocol. IP: ' + ip;
+}
+
+function refreshCamFeed() {
+  if (!currentCamIP) return;
+  const img = document.getElementById('camfeedimg');
+  if (img.style.display !== 'none') img.src = img.src.split('?')[0] + '?t=' + Date.now();
+}
+
+function tryNextStream() {
+  if (!currentCamIP || !netCamIPs.length) return;
+  const cam = netCamIPs[0];
+  currentStreamIdx = (currentStreamIdx + 1) % STREAM_PATHS.length;
+  const url = 'http://' + currentCamIP + STREAM_PATHS[currentStreamIdx];
+  document.getElementById('camFeedMsg').textContent = 'Trying: ' + url;
+  document.getElementById('camFeedMsg').style.display = 'block';
+  document.getElementById('camfeedimg').src = url + '?t=' + Date.now();
+}
+
+function snapFeed() {
+  const img = document.getElementById('camfeedimg');
+  if (!img.src) return;
+  const a = document.createElement('a');
+  const snap = document.createElement('canvas');
+  snap.width = img.naturalWidth || 640; snap.height = img.naturalHeight || 480;
+  snap.getContext('2d').drawImage(img, 0, 0);
+  a.href = snap.toDataURL('image/png');
+  a.download = 'specter_snap_' + Date.now() + '.png';
+  a.click();
+}
+
+// ═══════════════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════════════
+function clusterPoints(pts, radius) {
+  const clusters = [], used = {};
+  pts.forEach((p, i) => {
+    if (used[i]) return;
+    const cluster = { x: p.x, y: p.y, size: 1, members: [p], avgScore: p.score || 1 };
+    pts.forEach((q, j) => {
+      if (i === j || used[j]) return;
+      const dx = p.x - q.x, dy = p.y - q.y;
+      if (Math.sqrt(dx*dx + dy*dy) < radius) {
+        cluster.members.push(q);
+        cluster.size++;
+        cluster.avgScore = (cluster.avgScore + (q.score || 1)) / 2;
+        used[j] = true;
+      }
     });
-    used.add(i);
-    // Average centroid
-    cluster.x=cluster.members.reduce((a,b)=>a+b.x,0)/cluster.members.length;
-    cluster.y=cluster.members.reduce((a,b)=>a+b.y,0)/cluster.members.length;
+    used[i] = true;
+    cluster.x = cluster.members.reduce((a, b) => a + b.x, 0) / cluster.members.length;
+    cluster.y = cluster.members.reduce((a, b) => a + b.y, 0) / cluster.members.length;
     clusters.push(cluster);
   });
-  return clusters.filter(c=>c.size>=2); // at least 2 nearby hot pixels = real hotspot
+  return clusters.filter(c => c.size >= 2);
 }
 
-// ══ MAGNETOMETER ════════════════════════════════════
-function startMagnetometer(){
-  document.getElementById('magStatus').textContent='STARTING';
-  document.getElementById('magLog').textContent='// Requesting sensor access...';
-  if('DeviceOrientationEvent' in window){
-    // iOS 13+ requires permission
-    if(typeof DeviceOrientationEvent.requestPermission === 'function'){
-      DeviceOrientationEvent.requestPermission().then(s=>{
-        if(s==='granted') window.addEventListener('deviceorientation',handleOrientation,true);
-      }).catch(()=>{});
-    } else {
-      window.addEventListener('deviceorientation',handleOrientation,true);
-    }
-    document.getElementById('magStatus').textContent='ACTIVE';
-    document.getElementById('magStatus').className='mod-status active';
-    document.getElementById('magLog').textContent='// Magnetometer active — move device slowly near objects';
-  }
-  // Also try Magnetometer API if available
-  if('Magnetometer' in window){
-    try{
-      const mag=new Magnetometer({frequency:10});
-      mag.addEventListener('reading',()=>{
-        const magnitude=Math.sqrt(mag.x*mag.x+mag.y*mag.y+mag.z*mag.z);
-        processMagReading(magnitude);
-      });
-      mag.start();
-      document.getElementById('magLog').textContent='// Hardware magnetometer active';
-    }catch(e){document.getElementById('magLog').textContent='// Using orientation fallback';}
-  }
+function avgBright(d) { let s = 0; for (let i = 0; i < d.length; i += 4) s += (d[i]+d[i+1]+d[i+2])/3; return s/(d.length/4); }
+function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+const threatSources = {};
+function pushThreat(level, source, msg) {
+  const prev = threatSources[source] || 0;
+  if (level > prev) { threatSources[source] = level; addAlert(msg, level === 2 ? 'alert' : 'warn'); }
+  const max = Object.values(threatSources).reduce((a, b) => Math.max(a, b), 0);
+  setThreat(max);
+}
+function setThreat(level) {
+  const b = document.getElementById('tbadge');
+  if (level === 0) { b.textContent = '// CLEAR'; b.className = 'tbadge' + (scanning ? ' clear' : ''); }
+  else if (level === 1) { b.textContent = 'ANOMALY'; b.className = 'tbadge warn'; }
+  else { b.textContent = 'CAMERA DETECTED'; b.className = 'tbadge alert'; }
 }
 
-let lastAlpha=null,lastBeta=null,lastGamma=null;
-function handleOrientation(e){
-  if(e.alpha==null)return;
-  if(lastAlpha!==null){
-    const dA=Math.abs(e.alpha-lastAlpha);
-    const dB=Math.abs(e.beta-lastBeta);
-    const dG=Math.abs(e.gamma-lastGamma);
-    const delta=Math.sqrt(dA*dA+dB*dB+dG*dG);
-    const displayDelta=delta.toFixed(1);
-    document.getElementById('magDelta').textContent=displayDelta+'°';
-    // Baseline calibration
-    if(!magBaseline){magHistory.push(delta);if(magHistory.length>20){magBaseline=magHistory.reduce((a,b)=>a+b,0)/magHistory.length;}}
-    if(magBaseline){
-      const anomaly=delta/magBaseline;
-      const pct=Math.min(100,anomaly*30);
-      if(anomaly>3.5){
-        setMod('mag',Math.round(delta)+'°','alert',pct,'MAGNETIC ANOMALY — possible hidden device');
-        pushThreat(1,'mag','Magnetic anomaly detected: '+displayDelta+'° delta');
-      } else if(anomaly>2){
-        setMod('mag',Math.round(delta)+'°','warn',pct,'Elevated magnetic field detected');
-      } else {
-        setMod('mag',Math.round(delta)+'°','safe',Math.min(pct,25),'Magnetic field nominal');
-      }
-    } else {
-      setMod('mag',Math.round(delta)+'°','safe',10,'Calibrating baseline...');
-    }
-  }
-  lastAlpha=e.alpha;lastBeta=e.beta;lastGamma=e.gamma;
-}
-
-function processMagReading(magnitude){
-  if(!magBaseline){magHistory.push(magnitude);if(magHistory.length>20)magBaseline=magHistory.reduce((a,b)=>a+b,0)/magHistory.length;return;}
-  const anomaly=Math.abs(magnitude-magBaseline)/magBaseline;
-  document.getElementById('magDelta').textContent=magnitude.toFixed(0)+'µT';
-  const pct=Math.min(100,anomaly*100);
-  if(anomaly>.4){
-    setMod('mag',magnitude.toFixed(0)+'µT','alert',pct,'STRONG MAGNETIC ANOMALY');
-    pushThreat(2,'mag','Strong EM field: '+magnitude.toFixed(0)+'µT (baseline: '+magBaseline.toFixed(0)+'µT)');
-  } else if(anomaly>.15){
-    setMod('mag',magnitude.toFixed(0)+'µT','warn',pct,'Elevated EM field near baseline');
-  } else {
-    setMod('mag',magnitude.toFixed(0)+'µT','safe',pct*0.3,'EM field nominal');
-  }
-}
-
-// ══ RF NOISE DETECTION ══════════════════════════════
-// Cameras transmitting WiFi/BT cause HF noise detectable via mic.
-// We analyze the 4kHz+ band in the mic signal for anomalous energy.
-async function startRFScan(){
-  document.getElementById('rfStatus').textContent='STARTING';
-  try{
-    rfStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false}});
-    rfCtx=new(window.AudioContext||window.webkitAudioContext)();
-    const src=rfCtx.createMediaStreamSource(rfStream);
-    rfAnalyser=rfCtx.createAnalyser();
-    rfAnalyser.fftSize=2048;
-    rfAnalyser.smoothingTimeConstant=.8;
-    src.connect(rfAnalyser);
-    document.getElementById('rfStatus').textContent='ACTIVE';
-    document.getElementById('rfStatus').className='mod-status active';
-    document.getElementById('rfLog').textContent='// Mic RF analysis active';
-    let rfBaseline=null,rfBuf=[];
-    function rfFrame(){
-      if(!scanning)return;
-      const data=new Uint8Array(rfAnalyser.frequencyBinCount);
-      rfAnalyser.getByteFrequencyData(data);
-      // Focus on HF bands (>4kHz) — RF noise from wireless cameras
-      const hfStart=Math.floor(4000/(rfCtx.sampleRate/2)*data.length);
-      let hfEnergy=0;
-      for(let i=hfStart;i<data.length;i++)hfEnergy+=data[i];
-      hfEnergy/=(data.length-hfStart)*255;
-      document.getElementById('rfNoise').textContent=(hfEnergy*100).toFixed(1)+'%';
-      rfBuf.push(hfEnergy);
-      if(rfBuf.length>30){rfBuf.shift();}
-      if(!rfBaseline&&rfBuf.length>=20)rfBaseline=rfBuf.reduce((a,b)=>a+b,0)/rfBuf.length;
-      if(rfBaseline){
-        const anomaly=hfEnergy/rfBaseline;
-        const pct=Math.min(100,anomaly*50);
-        if(anomaly>3){
-          setMod('rf',(hfEnergy*100).toFixed(1)+'%','alert',pct,'HIGH RF ENERGY — wireless transmitter nearby');
-          pushThreat(1,'rf','Elevated RF energy: '+(hfEnergy*100).toFixed(1)+'% ('+anomaly.toFixed(1)+'× baseline)');
-          document.getElementById('rfLog').textContent='// ANOMALY: '+anomaly.toFixed(1)+'× above baseline';
-        } else if(anomaly>1.8){
-          setMod('rf',(hfEnergy*100).toFixed(1)+'%','warn',pct,'Elevated RF activity detected');
-          document.getElementById('rfLog').textContent='// Elevated: '+anomaly.toFixed(1)+'× baseline';
-        } else {
-          setMod('rf',(hfEnergy*100).toFixed(1)+'%','safe',Math.min(pct,25),'RF environment nominal');
-          document.getElementById('rfLog').textContent='// '+anomaly.toFixed(2)+'× baseline (nominal)';
-        }
-      } else {
-        setMod('rf',(hfEnergy*100).toFixed(1)+'%','safe',10,'Calibrating RF baseline...');
-      }
-      setTimeout(rfFrame,100);
-    }
-    rfFrame();
-  }catch(e){
-    document.getElementById('rfLog').textContent='// Mic access required for RF scan';
-    document.getElementById('rfStatus').textContent='NO MIC';
-  }
-}
-
-// ══ FLASH / LENS REFLECTION SCAN ════════════════════
-// Retroreflective camera lenses glow brightly when illuminated.
-// We flash the screen white and analyze the brightness spike in the camera.
-async function runFlashScan(){
-  if(!scanning){addAlert('Start scan first','warn');return;}
-  document.getElementById('lensStatus').textContent='FLASHING';
-  document.getElementById('lensLog').textContent='// Capturing baseline...';
-  setMod('lens','SCANNING','warn',50,'Running flash reflection test...');
-  // Capture baseline frame brightness
-  const W=vid.videoWidth,H=vid.videoHeight;
-  analysisCanvas.width=W;analysisCanvas.height=H;
-  actx.drawImage(vid,0,0,W,H);
-  const before=actx.getImageData(0,0,W,H);
-  const beforeAvg=avgBrightness(before.data);
-  // Flash: turn screen white
-  const overlay2=document.createElement('div');
-  overlay2.style.cssText='position:fixed;inset:0;background:#fff;z-index:9999;transition:opacity .1s';
-  document.body.appendChild(overlay2);
-  await delay(150);
-  // Capture during flash
-  actx.drawImage(vid,0,0,W,H);
-  const during=actx.getImageData(0,0,W,H);
-  const duringAvg=avgBrightness(during.data);
-  // Remove flash
-  overlay2.style.opacity='0';
-  setTimeout(()=>overlay2.remove(),200);
-  // Check for hotspots during flash (retroreflection)
-  const brightSpots=[];
-  const d=during.data;
-  for(let y=0;y<H;y+=4){
-    for(let x=0;x<W;x+=4){
-      const i=(y*W+x)*4;
-      if((d[i]+d[i+1]+d[i+2])/3>245)brightSpots.push({x,y});
-    }
-  }
-  const clusters=clusterPoints(brightSpots,40);
-  lensScore=clusters.length;
-  const brightnessDelta=duringAvg-beforeAvg;
-  document.getElementById('lensStatus').className='mod-status ok';
-  document.getElementById('lensStatus').textContent='DONE';
-  if(clusters.length>0){
-    setMod('lens',clusters.length+' REFLECTOR'+(clusters.length>1?'S':''),'alert',Math.min(100,clusters.length*25),'RETROREFLECTIVE LENS DETECTED — possible camera');
-    pushThreat(2,'lens',clusters.length+' retroreflective spot'+(clusters.length>1?'s':'')+' detected — sweep area');
-    document.getElementById('lensLog').textContent='// '+clusters.length+' bright reflector'+(clusters.length>1?'s':'')+' found during flash';
-    document.getElementById('lensHint').textContent='⚠ LENS GLINT AT '+clusters.map(c=>`(${Math.round(c.x/W*100)}%,${Math.round(c.y/H*100)}%)`).join(', ');
-  } else {
-    setMod('lens','CLEAR','safe',brightnessDelta>5?15:5,'No retroreflective lenses detected');
-    document.getElementById('lensLog').textContent='// No reflectors found (Δ brightness: '+brightnessDelta.toFixed(1)+')';
-    document.getElementById('lensHint').textContent='';
-  }
-}
-
-function avgBrightness(d){
-  let sum=0;for(let i=0;i<d.length;i+=4)sum+=( d[i]+d[i+1]+d[i+2])/3;
-  return sum/(d.length/4);
-}
-
-// ══ NETWORK SCAN ════════════════════════════════════
-// Probe common IP addresses for open ports used by IP cameras.
-const CAM_PORTS=[80,8080,554,8554,8888,81,7070,8000,9000];
-const CAM_PATHS=['/','/video','/videostream.cgi','/mjpg/video.mjpg','/stream','/live','/snapshot.jpg','/cgi-bin/viewer/video.jpg'];
-
-async function scanNetwork(){
-  if(netScanActive)return;
-  netScanActive=true;
-  document.getElementById('netProgress').textContent='// SCANNING...';
-  const grid=document.getElementById('netGrid');
-  grid.innerHTML='';
-  document.getElementById('netCount').textContent='0';
-  let devicesFound=0,camsFound=0;
-  // Get local subnet hint via WebRTC
-  let subnet='192.168.1';
-  try{
-    const pc=new RTCPeerConnection({iceServers:[]});
-    pc.createDataChannel('');
-    await pc.createOffer().then(o=>pc.setLocalDescription(o));
-    await new Promise(r=>setTimeout(r,400));
-    const sdp=pc.localDescription?.sdp||'';
-    const match=sdp.match(/([0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+/);
-    if(match)subnet=match[1];
-    pc.close();
-  }catch(e){}
-  document.getElementById('netProgress').textContent=`// PROBING ${subnet}.x`;
-  // Scan .1 to .30 (most likely router + devices)
-  const targets=[];
-  for(let i=1;i<=30;i++)targets.push(`${subnet}.${i}`);
-  // Also add common router IPs
-  ['192.168.0.1','10.0.0.1','172.16.0.1'].forEach(ip=>{if(!targets.includes(ip))targets.push(ip);});
-  const probeResults=await Promise.allSettled(
-    targets.map(async ip=>{
-      const cell=document.createElement('div');cell.className='net-cell';cell.textContent=ip.split('.').pop();
-      cell.title=ip;grid.appendChild(cell);
-      cell.className='net-cell scanning';
-      // Try to fetch with a short timeout — CORS will block but the response timing reveals the host
-      let alive=false;
-      try{
-        const ctrl=new AbortController();
-        const tid=setTimeout(()=>ctrl.abort(),800);
-        const res=await fetch(`http://${ip}:80/`,{signal:ctrl.signal,mode:'no-cors'});
-        clearTimeout(tid);alive=true;
-      }catch(e){
-        // If aborted = no response. If network error = host exists (CORS block means it responded)
-        alive=e.name!=='AbortError'&&e.name!=='TypeError';
-      }
-      if(alive){
-        devicesFound++;
-        document.getElementById('netCount').textContent=devicesFound;
-        // Check for camera-specific paths
-        let isCamera=false;
-        for(const path of CAM_PATHS){
-          try{
-            const ctrl2=new AbortController();
-            const tid2=setTimeout(()=>ctrl2.abort(),600);
-            await fetch(`http://${ip}${path}`,{signal:ctrl2.signal,mode:'no-cors'});
-            clearTimeout(tid2);
-            isCamera=true;break;
-          }catch(e){if(e.name!=='AbortError')isCamera=true;}
-        }
-        if(isCamera){
-          cell.className='net-cell camera';cell.title=ip+' — POSSIBLE CAMERA';
-          camsFound++;
-          pushThreat(2,'net',`Network device at ${ip} responding on camera ports`);
-          addAlert(`Camera-type device found at ${ip}`,'alert');
-        } else {
-          cell.className='net-cell device';cell.title=ip+' — DEVICE';
-        }
-      } else {
-        cell.className='net-cell safe';
-      }
-      return{ip,alive};
-    })
-  );
-  document.getElementById('netProgress').textContent=`// ${devicesFound} devices, ${camsFound} potential cameras`;
-  if(camsFound===0)addAlert(`Network scan complete — ${devicesFound} devices found, no obvious cameras`,'info');
-  netScanActive=false;
-}
-
-// ══ THREAT SYSTEM ════════════════════════════════════
-const threatSources={};
-function pushThreat(level,source,msg){
-  const prev=threatSources[source]||0;
-  if(level>prev){
-    threatSources[source]=level;
-    addAlert(msg,level===2?'alert':'warn');
-  }
-  const maxLevel=Object.values(threatSources).reduce((a,b)=>Math.max(a,b),0);
-  setThreat(maxLevel);
-}
-function setThreat(level){
-  threatLevel=level;
-  const badge=document.getElementById('threatBadge');
-  if(level===0){badge.textContent='// CLEAR';badge.className='threat-badge'+(scanning?' clear':'');}
-  else if(level===1){badge.textContent='⚠ ANOMALY';badge.className='threat-badge warn';}
-  else{badge.textContent='⚠ THREAT DETECTED';badge.className='threat-badge alert';}
-}
-
-function addAlert(msg,type='info'){
-  const existing=alerts.find(a=>a.msg===msg);
-  if(existing&&Date.now()-existing.ts<5000)return; // debounce
-  alertId++;
-  const ts=Date.now();
-  alerts.unshift({id:alertId,msg,type,ts});
-  if(alerts.length>20)alerts.pop();
-  renderAlerts();
-}
-function renderAlerts(){
-  const feed=document.getElementById('alertFeed');
-  feed.innerHTML='';
-  if(!alerts.length){feed.innerHTML='<div class="no-alerts">// NO ALERTS</div>';return;}
-  alerts.forEach(a=>{
-    const div=document.createElement('div');
-    div.className='alert-item'+(a.type==='warn'?' warn':a.type==='alert'?' alert':'');
-    const t=new Date(a.ts);
-    const ts=`${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}:${String(t.getSeconds()).padStart(2,'0')}`;
-    div.innerHTML=`${a.msg}<span class="alert-time">${ts}</span>`;
+let _alerts = [];
+function addAlert(msg, type) {
+  type = type || 'info';
+  const ex = _alerts.find(a => a.msg === msg);
+  if (ex && Date.now() - ex.ts < 6000) return;
+  _alerts.unshift({ id: ++alertId, msg, type, ts: Date.now() });
+  if (_alerts.length > 25) _alerts.pop();
+  const feed = document.getElementById('alertFeed'); feed.innerHTML = '';
+  _alerts.forEach(a => {
+    const div = document.createElement('div');
+    div.className = 'ait' + (a.type === 'warn' ? ' w' : a.type === 'alert' ? ' a' : '');
+    const t = new Date(a.ts);
+    div.innerHTML = a.msg + '<span class="at">' + String(t.getHours()).padStart(2,'0') + ':' + String(t.getMinutes()).padStart(2,'0') + ':' + String(t.getSeconds()).padStart(2,'0') + '</span>';
     feed.appendChild(div);
   });
 }
-function clearAlerts(){alerts=[];Object.keys(threatSources).forEach(k=>delete threatSources[k]);renderAlerts();setThreat(0);}
-
-// ══ UI HELPERS ═══════════════════════════════════════
-function setMod(id,val,state,pct,sub){
-  const valEl=document.getElementById(id+'Val');
-  const barEl=document.getElementById(id+'Bar');
-  const subEl=document.getElementById(id+'Sub');
-  if(valEl){valEl.textContent=val;valEl.className='mod-val'+(state==='safe'?' safe':state==='warn'?' warn':'');}
-  if(barEl){barEl.style.width=pct+'%';barEl.className='mod-fill'+(state==='safe'?' safe':state==='warn'?' warn':'');}
-  if(subEl&&sub)subEl.textContent=sub;
+function clearAll() {
+  _alerts = [];
+  Object.keys(threatSources).forEach(k => delete threatSources[k]);
+  document.getElementById('alertFeed').innerHTML = '<div class="noal">// CLEARED</div>';
+  setThreat(0); detectionConfidence = 0;
 }
-function setErr(m){const b=document.getElementById('errBanner');if(m){b.textContent='⚠ '+m;b.style.display='block';}else b.style.display='none';}
-function delay(ms){return new Promise(r=>setTimeout(r,ms));}
+function setMod(id, val, state, pct, sub) {
+  const ve = document.getElementById(id+'Val'), be = document.getElementById(id+'Bar'), se = document.getElementById(id+'Sub');
+  if (ve) { ve.textContent = val; ve.className = 'mval' + (state==='safe'?' safe':state==='warn'?' warn':''); }
+  if (be) { be.style.width = pct + '%'; be.className = 'mfill' + (state==='safe'?' safe':state==='warn'?' warn':''); }
+  if (se && sub) se.textContent = sub;
+}
+function setErr(m) { const b = document.getElementById('errB'); if(m){b.textContent=m;b.style.display='block';}else b.style.display='none'; }
 </script>
 </body>
 </html>
