@@ -1215,199 +1215,267 @@ function classifySource(freqData, timeData, sampleRate){
   const N = freqData.length;
   const binHz = sampleRate / (N * 2);
 
-  // ── 1. RMS envelope (current frame) ──
+  // ════════════════════════════════════════════════════════
+  // FEATURE 1: RMS envelope
+  // ════════════════════════════════════════════════════════
   let rmsSum = 0;
   for(let i=0;i<timeData.length;i++){
-    const s = (timeData[i]-128)/128;
-    rmsSum += s*s;
+    const s=(timeData[i]-128)/128; rmsSum+=s*s;
   }
   const rms = Math.sqrt(rmsSum/timeData.length);
+  rmsHistory.push(rms);
+  if(rmsHistory.length>240) rmsHistory.shift();
+  const rmsMean = rmsHistory.reduce((a,b)=>a+b,0)/rmsHistory.length;
+  const rmsVar  = variance(rmsHistory);
 
-  // ── 2. SPECTRAL FLUX — frame-to-frame spectral change ──
-  // High flux = formants shifting (human); Low = steady music/broadcast
-  let flux = 0;
+  // ════════════════════════════════════════════════════════
+  // FEATURE 2: SPECTRAL FLUX (frame-to-frame change)
+  // ════════════════════════════════════════════════════════
+  let flux=0;
   if(prevFreqData){
     for(let i=0;i<N;i++){
-      const diff = (freqData[i] - prevFreqData[i]) / 255;
-      flux += diff * diff;
+      const d=(freqData[i]-prevFreqData[i])/255; flux+=d*d;
     }
-    flux = Math.sqrt(flux / N);
+    flux=Math.sqrt(flux/N);
   }
-  prevFreqData = new Uint8Array(freqData);
+  prevFreqData=new Uint8Array(freqData);
   fluxHistory.push(flux);
-  if(fluxHistory.length > 90) fluxHistory.shift();
-  const fluxMean = fluxHistory.reduce((a,b)=>a+b,0)/fluxHistory.length;
-  const fluxVar  = variance(fluxHistory);
+  if(fluxHistory.length>90) fluxHistory.shift();
+  const fluxVar=variance(fluxHistory);
 
-  // ── 3. AMPLITUDE MODULATION RATE ──
-  // Human syllables modulate at 3–8 Hz; broadcast is AGC-compressed flat
-  rmsHistory.push(rms);
-  if(rmsHistory.length > 180) rmsHistory.shift();
-  const rmsVar = variance(rmsHistory);
-  // Count RMS zero-crossings (relative to mean) — proxy for modulation rate
-  const rmsMean = rmsHistory.reduce((a,b)=>a+b,0)/rmsHistory.length;
-  let rmsCross = 0;
-  for(let i=1;i<rmsHistory.length;i++){
-    if((rmsHistory[i]>rmsMean) !== (rmsHistory[i-1]>rmsMean)) rmsCross++;
-  }
-  const amRate = rmsCross / rmsHistory.length; // 0–1, human ~0.15–0.4
-
-  // ── 4. SUB-BASS vs LOW-MID RATIO ──
-  // Music/TV: strong sub-bass; Human voice: minimal below 100Hz
-  let subBass=0, lowMid=0;
+  // ════════════════════════════════════════════════════════
+  // FEATURE 3: PROXIMITY EFFECT — THE KEY DISCRIMINATOR
+  // A live voice close to the mic has strong low-mid (100–300Hz) energy
+  // relative to upper-mids (1–3kHz). TV audio pumped through speakers
+  // at room distance has the OPPOSITE: the room absorbs lows, highs carry.
+  // Ratio: lowMidEnergy / voiceBandEnergy
+  // Live: ratio > 0.35    TV: ratio < 0.22
+  // ════════════════════════════════════════════════════════
+  let prox_lo=0, prox_hi=0;
   for(let i=0;i<N;i++){
-    const hz = i * binHz;
-    const v = (freqData[i]/255)**2;
-    if(hz < 100) subBass += v;
-    else if(hz < 350) lowMid += v;
+    const hz=i*binHz, v=(freqData[i]/255)**2;
+    if(hz>=100 && hz<320)  prox_lo+=v;   // proximity band
+    if(hz>=900 && hz<3200) prox_hi+=v;   // presence band
   }
-  const subRatio = subBass / (lowMid + subBass + 1e-9);
-  // High subRatio → music/TV; Low → human
+  const proxRatio = prox_lo / (prox_hi + prox_lo + 1e-9);
+  // Live speaker: proxRatio ~0.35-0.60 (strong body/warmth near mic)
+  // TV across room: proxRatio ~0.10-0.22 (room attenuates lows)
 
-  // ── 5. SILENCE BURST PATTERN ──
-  // Human: natural pauses 100–800ms; Radio: nearly continuous
-  const isSilent = rms < 0.035;
-  if(isSilent){
-    silenceRuns++;
-  } else {
-    if(silenceRuns > 2 && silenceRuns < 80){ // 33ms–1.3s bursts = human
-      silenceBursts.push(silenceRuns);
-      if(silenceBursts.length > 20) silenceBursts.shift();
+  // ════════════════════════════════════════════════════════
+  // FEATURE 4: BROADCAST COMPRESSION FINGERPRINT
+  // TV/radio audio is brick-wall limited — the dynamic range is very narrow
+  // (typically <6dB). Live voice in real room has 15-25dB dynamic range.
+  // Measure: peak-to-valley ratio of RMS in last 2 seconds (120 frames)
+  // ════════════════════════════════════════════════════════
+  let dynRange=0;
+  if(rmsHistory.length >= 60){
+    const recent = rmsHistory.slice(-120).filter(v=>v>0.01);
+    if(recent.length > 10){
+      const peak = Math.max(...recent);
+      const floor = recent.reduce((a,b)=>a+b,0)/recent.length * 0.3;
+      dynRange = floor > 0 ? 20*Math.log10(peak/(floor+1e-9)) : 0;
     }
-    silenceRuns = 0;
   }
-  const burstScore = silenceBursts.length > 3
-    ? Math.min(1, silenceBursts.length / 12)
-    : 0;
+  // Live: dynRange > 12dB    TV compressed: dynRange < 6dB
 
-  // ── 6. SIBILANCE BURST (4–8kHz variance) ──
-  // Human: brief sibilant bursts; music: sustained; broadcast speech: de-essed
-  let sibEnergy = 0;
+  // ════════════════════════════════════════════════════════
+  // FEATURE 5: SUB-BASS RATIO
+  // TV speakers + room = boosted sub-bass from standing waves
+  // Live voice at mic = minimal sub-bass
+  // ════════════════════════════════════════════════════════
+  let subBass=0, voiceBand=0;
   for(let i=0;i<N;i++){
-    const hz = i * binHz;
-    if(hz >= 4000 && hz <= 8000) sibEnergy += (freqData[i]/255)**2;
+    const hz=i*binHz, v=(freqData[i]/255)**2;
+    if(hz<100) subBass+=v;
+    else if(hz<3500) voiceBand+=v;
   }
-  sibHistory.push(sibEnergy);
-  if(sibHistory.length > 30) sibHistory.shift();
-  const sibVar = variance(sibHistory);
+  const subRatio=subBass/(voiceBand+subBass+1e-9);
 
-  // ── 7. FORMANT TRANSITION SCORE ──
-  // True human speech: F1/F2 centroids shift rapidly across frames
-  // Use spectral centroid of 300–3000Hz band
-  let centNum=0, centDen=0;
+  // ════════════════════════════════════════════════════════
+  // FEATURE 6: SILENCE BURST PATTERN
+  // Human speech: natural pauses 150–900ms between words
+  // TV: nearly continuous signal with AGC filling gaps
+  // ════════════════════════════════════════════════════════
+  const isSilent=rms<0.03;
+  if(isSilent){ silenceRuns++; }
+  else{
+    if(silenceRuns>4 && silenceRuns<90){
+      silenceBursts.push(silenceRuns);
+      if(silenceBursts.length>20) silenceBursts.shift();
+    }
+    silenceRuns=0;
+  }
+  const burstScore=silenceBursts.length>3 ? Math.min(1,silenceBursts.length/12) : 0;
+
+  // ════════════════════════════════════════════════════════
+  // FEATURE 7: ROOM REVERB TAIL DETECTION
+  // Live close voice: very short or no reverb tail (direct sound dominates)
+  // TV in room: long reverb tail as TV speaker sound bounces off walls
+  // Proxy: measure how quickly RMS drops after a loud frame
+  // ════════════════════════════════════════════════════════
+  let reverbScore=0;
+  if(rmsHistory.length>12){
+    const recent12=rmsHistory.slice(-12);
+    const peak12=Math.max(...recent12);
+    const last3=recent12.slice(-3).reduce((a,b)=>a+b,0)/3;
+    if(peak12>0.04){
+      const tailRatio=last3/(peak12+1e-9);
+      // Long tail (TV in room): tailRatio > 0.7
+      // Short tail (live voice): tailRatio < 0.35
+      reverbScore=tailRatio; // high = reverby = media
+    }
+  }
+
+  // ════════════════════════════════════════════════════════
+  // FEATURE 8: SPECTRAL FLATNESS (WIENER ENTROPY)
+  // TV/broadcast: highly processed, spectrally flat in voice band
+  // Live voice: peaky spectrum with clear formant structure
+  // Compute geometric/arithmetic mean ratio in 300-4000Hz
+  // ════════════════════════════════════════════════════════
+  let geoSum=0, arith=0, cnt=0;
   for(let i=0;i<N;i++){
-    const hz = i * binHz;
-    if(hz < 300 || hz > 3000) continue;
-    const v = freqData[i]/255;
-    centNum += hz * v;
-    centDen += v;
+    const hz=i*binHz;
+    if(hz<300||hz>4000) continue;
+    const v=Math.max(0.001, freqData[i]/255);
+    geoSum+=Math.log(v); arith+=v; cnt++;
   }
-  const centroid = centDen > 0.05 ? centNum/centDen : 0;
+  const sfm = cnt>0 ? Math.exp(geoSum/cnt)/(arith/cnt+1e-9) : 0.5;
+  // sfm near 1 = flat (broadcast); sfm near 0 = peaky (live voice formants)
 
-  // ── SCORING ──
-  // Each feature votes with weighted confidence
-  let humanScore = 0;
-  let mediaScore = 0;
+  // ════════════════════════════════════════════════════════
+  // FEATURE 9: SIBILANCE VARIANCE
+  // Natural S/SH sounds from live voice: bursty, highly variable
+  // TV de-essed audio: smoother sibilance
+  // ════════════════════════════════════════════════════════
+  let sibE=0;
+  for(let i=0;i<N;i++){
+    const hz=i*binHz;
+    if(hz>=4500&&hz<=8500) sibE+=(freqData[i]/255)**2;
+  }
+  sibHistory.push(sibE);
+  if(sibHistory.length>30) sibHistory.shift();
+  const sibVar=variance(sibHistory);
 
-  // ── CALIBRATED SCORING v2.1 ──
-  // Weights tuned for real mic input (not lab conditions)
-  // Human voice baseline bias: live mic always has more variance than broadcast
+  // ════════════════════════════════════════════════════════
+  // SCORING ENGINE
+  // Each feature votes for HUMAN or MEDIA with calibrated weights
+  // ════════════════════════════════════════════════════════
+  let humanScore=0, mediaScore=0;
 
-  // SPECTRAL FLUX VARIANCE
-  // Human: flux jumps between phonemes → high variance over 90 frames
-  // Broadcast: already processed, flux is smoother/steadier
-  // Scale: fluxVar typically 0.0001–0.005 for human, <0.0001 for broadcast
-  const fluxVarScore = Math.min(1, fluxVar * 1200);
-  humanScore += fluxVarScore * 28;
-  mediaScore += (1 - fluxVarScore) * 18;
+  // 1. PROXIMITY EFFECT (weight: 32 — strongest discriminator)
+  // proxRatio > 0.32 = live close voice
+  // proxRatio < 0.20 = TV across room
+  if(proxRatio > 0.30){
+    humanScore += Math.min(1,(proxRatio-0.20)/0.20) * 32;
+  } else if(proxRatio < 0.20){
+    mediaScore += Math.min(1,(0.20-proxRatio)/0.15) * 32;
+  }
 
-  // AMPLITUDE MODULATION RATE
-  // Human syllable rhythm: amRate 0.10–0.40 (crosses RMS mean regularly)
-  // Broadcast AGC: amRate < 0.07 (compressed flat) OR music > 0.50 (fast)
-  // Wider acceptance window for real-world voice (whispering, far-field)
-  const amHuman = amRate > 0.06 && amRate < 0.50
-    ? 1 - Math.abs(amRate - 0.22) / 0.22
-    : 0;
-  const amMedia = amRate < 0.05 ? 1 : amRate > 0.55 ? 0.7 : 0;
-  humanScore += Math.max(0, amHuman) * 28;
-  mediaScore += amMedia * 18;
+  // 2. DYNAMIC RANGE (weight: 28)
+  // Live: > 10dB   TV compressed: < 6dB
+  if(dynRange > 9){
+    humanScore += Math.min(1,(dynRange-9)/10) * 28;
+  } else if(dynRange < 7 && dynRange > 0){
+    mediaScore += Math.min(1,(7-dynRange)/5) * 28;
+  }
 
-  // SUB-BASS — softer penalty, mic acoustics vary wildly
-  // Only score media if sub-bass is dominant (>30% of low energy)
-  // Human voice: subRatio typically 0.05–0.18 in real rooms
-  if(subRatio > 0.28) mediaScore += Math.min(1,(subRatio-0.28)*5) * 14;
-  if(subRatio < 0.22) humanScore += (1 - subRatio/0.22) * 8;
+  // 3. REVERB TAIL (weight: 22)
+  // Long tail = TV room reverb
+  if(reverbScore > 0.65){
+    mediaScore += Math.min(1,(reverbScore-0.5)/0.4) * 22;
+  } else if(reverbScore < 0.35 && rms > 0.03){
+    humanScore += (1 - reverbScore/0.35) * 22;
+  }
 
-  // SILENCE BURSTS — strongest human indicator
-  // Human speech: 3–15 natural pauses per 20 stored bursts
-  // Broadcast: nearly continuous → few bursts
-  humanScore += burstScore * 24;
-  mediaScore += Math.max(0, 0.6 - burstScore) * 12;
+  // 4. SPECTRAL FLATNESS (weight: 18)
+  // sfm near 0 = peaky = live voice formants
+  // sfm near 0.8 = flat = processed broadcast
+  if(sfm < 0.35){
+    humanScore += (1-sfm/0.35) * 18;
+  } else if(sfm > 0.65){
+    mediaScore += Math.min(1,(sfm-0.55)/0.35) * 18;
+  }
 
-  // SIBILANCE VARIANCE — bursty S/SH = human; steady highs = music
-  const sibScore = Math.min(1, sibVar * 600);
+  // 5. SUB-BASS (weight: 14)
+  if(subRatio > 0.25) mediaScore += Math.min(1,(subRatio-0.15)/0.2)*14;
+  if(subRatio < 0.15) humanScore += (1-subRatio/0.15)*8;
+
+  // 6. SILENCE BURSTS (weight: 20)
+  // Natural pauses = human. Only score if signal exists.
+  if(rmsHistory.length > 60){
+    humanScore += burstScore * 20;
+    mediaScore += Math.max(0, 0.5 - burstScore) * 10;
+  }
+
+  // 7. SPECTRAL FLUX VARIANCE (weight: 14)
+  const fluxVarScore=Math.min(1,fluxVar*1200);
+  humanScore += fluxVarScore * 14;
+  mediaScore += (1-fluxVarScore) * 8;
+
+  // 8. SIBILANCE VARIANCE (weight: 10)
+  const sibScore=Math.min(1,sibVar*600);
   humanScore += sibScore * 10;
-  mediaScore += (1 - sibScore) * 8;
+  mediaScore += (1-sibScore) * 6;
 
-  // RMS VARIANCE — live speech is dynamic; broadcast is brick-wall limited
-  // Scale: rmsVar 0.003–0.02 for human, <0.002 for broadcast
-  const rmsVarScore = Math.min(1, rmsVar * 180);
+  // 9. RMS VARIANCE (weight: 10)
+  const rmsVarScore=Math.min(1,rmsVar*200);
   humanScore += rmsVarScore * 10;
-  mediaScore += Math.max(0, 1 - rmsVarScore*2) * 8;
+  mediaScore += Math.max(0,1-rmsVarScore*2)*6;
 
-  // BASELINE HUMAN PRIOR — mic input is more likely human than broadcast
-  // Removes false-media classification when all features are ambiguous
-  humanScore += 6;
+  // 10. BASELINE HUMAN PRIOR (weight: 8)
+  // Direct mic input biased toward human — environmental noise usually
+  // doesn't contain the proximity + dynamic pattern of TV
+  humanScore += 8;
 
-  // Total
-  const total = humanScore + mediaScore + 1e-9;
-  const humanRaw = humanScore / total;
-  const mediaRaw  = mediaScore  / total;
+  // ── TEMPORAL SMOOTHING ──
+  const total=humanScore+mediaScore+1e-9;
+  const humanRaw=humanScore/total;
 
-  // Temporal smoothing — slow to switch to MEDIA, fast to switch to HUMAN
-  // Asymmetric alpha: human detects quickly, media needs sustained evidence
-  const alphaToHuman = 0.25;  // fast: voice appears → detect quickly
-  const alphaToMedia = 0.08;  // slow: need sustained media signal to flip
-
+  // Asymmetric: fast to HUMAN (0.22), very slow to MEDIA (0.055)
+  // Prevents TV cross-talk from flipping classifier momentarily
+  const alphaToHuman=0.22;
+  const alphaToMedia=0.055;
   if(humanRaw > clsSmooth.human){
-    clsSmooth.human = clsSmooth.human * (1-alphaToHuman) + humanRaw * alphaToHuman;
+    clsSmooth.human=clsSmooth.human*(1-alphaToHuman)+humanRaw*alphaToHuman;
   } else {
-    clsSmooth.human = clsSmooth.human * (1-alphaToMedia) + humanRaw * alphaToMedia;
+    clsSmooth.human=clsSmooth.human*(1-alphaToMedia)+humanRaw*alphaToMedia;
   }
-  clsSmooth.media = 1 - clsSmooth.human;
+  clsSmooth.media=1-clsSmooth.human;
 
-  // Grace period: first 8 seconds always HUMAN (features need warmup)
-  const confidence = Math.abs(clsSmooth.human - clsSmooth.media);
-  let verdict = 'MIXED';
-  if(frameCount < 480){
-    // Warmup — default human, only flip if extremely strong media signal
-    verdict = clsSmooth.media > 0.80 ? 'MEDIA' : 'HUMAN';
-  } else if(confidence > 0.15){
-    // Require MEDIA to be >70% confident before labeling as media
-    if(clsSmooth.media > clsSmooth.human && clsSmooth.media > 0.65){
-      verdict = 'MEDIA';
-    } else if(clsSmooth.human > clsSmooth.media){
-      verdict = 'HUMAN';
+  // ── VERDICT ──
+  const confidence=Math.abs(clsSmooth.human-clsSmooth.media);
+  let verdict='MIXED';
+  if(frameCount<360){
+    // 6-second warmup: only flip to MEDIA if overwhelming
+    verdict=clsSmooth.media>0.82?'MEDIA':'HUMAN';
+  } else {
+    // MEDIA needs >68% confidence sustained. HUMAN needs only >52%.
+    // This asymmetry means we amplify human even in doubt.
+    if(clsSmooth.media>clsSmooth.human && clsSmooth.media>0.68){
+      verdict='MEDIA';
+    } else {
+      verdict='HUMAN';
     }
   }
 
   return {
-    sfm:         Math.min(1, subRatio * 3),
-    formantRatio:Math.min(1, fluxVarScore),
-    pitchVar:    Math.min(1, amRate * 2.5),
-    zcrNorm:     Math.min(1, burstScore),
-    dynVar:      Math.min(1, rmsVarScore),
+    sfm:         Math.min(1,sfm),
+    formantRatio:Math.min(1,fluxVarScore),
+    pitchVar:    Math.min(1,proxRatio*2),
+    zcrNorm:     Math.min(1,burstScore),
+    dynVar:      Math.min(1,rmsVarScore),
     humanPct:    clsSmooth.human,
     mediaPct:    clsSmooth.media,
     confidence,
     verdict,
-    // debug labels
-    _flux: fluxMean.toFixed(3),
-    _amr:  amRate.toFixed(3),
-    _sub:  subRatio.toFixed(3),
-    _sib:  sibVar.toFixed(4),
+    _prox:  proxRatio.toFixed(3),
+    _dyn:   dynRange.toFixed(1)+'dB',
+    _rev:   reverbScore.toFixed(3),
+    _sfm:   sfm.toFixed(3),
+    _sub:   subRatio.toFixed(3),
   };
 }
+
 
 function variance(arr){
   if(arr.length<2) return 0;
