@@ -2548,202 +2548,71 @@ function vidLoadScript(src){
 }
 
 async function loadVidFFmpeg(){
-  if(vidFFmpegLoaded)return;
-  vidSetStage('Loading processing engine (one-time, ~30MB)…',2);
-  if(!window.FFmpegWASM) await vidLoadScript('https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js');
-  if(!window.FFmpegUtil) await vidLoadScript('https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js');
-  const {FFmpeg}=window.FFmpegWASM;
-  const {toBlobURL}=window.FFmpegUtil;
-  vidFFmpeg=new FFmpeg();
-  vidFFmpeg.on('log',({message})=>{vidLog(message);});
-  vidFFmpeg.on('progress',({progress})=>{
-    if(progress>=0&&progress<=1) vidSetStage(document.getElementById('vidStageTxt').textContent.replace('// ',''),10+progress*20);
-  });
-  const baseURL='https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
-  await vidFFmpeg.load({
-    coreURL:await toBlobURL(`${baseURL}/ffmpeg-core.js`,'text/javascript'),
-    wasmURL:await toBlobURL(`${baseURL}/ffmpeg-core.wasm`,'application/wasm'),
-  });
-  vidFFmpegLoaded=true;
-}
+  if(vidFFmpegLoaded) return;
 
-// ── Offline noise gate: percentile-based per-band noise floor, no calibration window needed ──
-function vidGateOffline(channelData,sr,strength,onProgress){
-  const N=channelData.length;
-  const chunkSize=2048;
-  const nChunks=Math.ceil(N/chunkSize);
-  const bandsPerChunk=new Array(nChunks);
-  for(let c=0;c<nChunks;c++){
-    const start=c*chunkSize,end=Math.min(N,start+chunkSize),len=end-start;
-    const bSz=Math.max(1,Math.floor(len/8));
-    const bE=new Float32Array(8);
-    for(let b=0;b<8;b++){
-      let e=0,cnt=0;
-      const bs=start+b*bSz,be=Math.min(end,bs+bSz);
-      for(let i=bs;i<be;i++){e+=channelData[i]*channelData[i];cnt++;}
-      bE[b]=cnt>0?Math.sqrt(e/cnt):0;
+  // ── Show download progress with fetch + ReadableStream ──
+  async function fetchWithProgress(url, label, pctStart, pctEnd){
+    vidSetStage(label, pctStart);
+    try {
+      const resp = await fetch(url);
+      const total = parseInt(resp.headers.get('content-length') || '0');
+      const reader = resp.body.getReader();
+      const chunks = [];
+      let received = 0;
+      while(true){
+        const {done, value} = await reader.read();
+        if(done) break;
+        chunks.push(value);
+        received += value.length;
+        if(total > 0){
+          const pct = pctStart + (received/total)*(pctEnd-pctStart);
+          vidSetStage(label + ' (' + Math.round(received/1024) + 'KB / ' + Math.round(total/1024) + 'KB)', pct);
+        }
+      }
+      const blob = new Blob(chunks);
+      return URL.createObjectURL(blob);
+    } catch(e) {
+      // fallback: direct URL
+      return url;
     }
-    bandsPerChunk[c]=bE;
   }
-  // Percentile-based noise floor per band (15th percentile = assume bottom 15% of frames are noise-dominant)
-  const noiseProfile=new Float32Array(8);
-  for(let b=0;b<8;b++){
-    const vals=bandsPerChunk.map(f=>f[b]).sort((a,c)=>a-c);
-    const idx=Math.floor(vals.length*0.10);  // 10th percentile = tighter noise reference
-    noiseProfile[b]=(vals[idx]||0)*1.1;  // less headroom = doesn't crush quiet voices
+
+  vidSetStage('Loading FFmpeg engine (first time only, ~8MB)…', 2);
+  vidLog('Downloading processing engine...');
+
+  if(!window.FFmpegWASM){
+    vidSetStage('Loading ffmpeg.js…', 3);
+    await vidLoadScript('https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js');
   }
-  const VOICE=[0,1,2,3,4,5];  // Include band 0 for low-pitched voice fundamentals
-  const sensitivity=0.7;
-  const out=new Float32Array(N);
-  let gateSmooth=0;
-  for(let c=0;c<nChunks;c++){
-    const bE=bandsPerChunk[c];
-    const start=c*chunkSize,end=Math.min(N,start+chunkSize);
-    for(let i=start;i<end;i++){
-      const localLen=end-start;
-      const band=Math.min(7,Math.floor(((i-start)/localLen)*8));
-      const nRef=noiseProfile[band]*strength;
-      const sig=bE[band];
-      const isV=VOICE.includes(band);
-      const snr=sig/(nRef+1e-10);
-      const snrT=0.6+sensitivity*1.8;  // Lower = catches quieter voices
-      const tg=(snr>snrT&&isV)?1.0:(snr>snrT*.5&&isV)?Math.pow((snr-snrT*.5)/(snrT*.5),.5):0.0;
-      const alpha=tg>gateSmooth?0.012:0.045;
-      gateSmooth=gateSmooth*(1-alpha)+tg*alpha;
-      const sub=Math.max(0,1-(nRef/(sig+1e-10))*strength);
-      out[i]=channelData[i]*gateSmooth*Math.max(0.18,sub);  // don't gate quiet voice to zero
+  if(!window.FFmpegUtil){
+    vidSetStage('Loading ffmpeg utils…', 6);
+    await vidLoadScript('https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js');
+  }
+
+  const {FFmpeg} = window.FFmpegWASM;
+  const {toBlobURL, fetchFile} = window.FFmpegUtil;
+  vidFFmpeg = new FFmpeg();
+
+  vidFFmpeg.on('log', ({message}) => { vidLog(message); });
+  vidFFmpeg.on('progress', ({progress, time}) => {
+    if(progress >= 0 && progress <= 1){
+      const pct = 50 + Math.round(progress * 35);
+      vidSetStage('Processing video… ' + Math.round(progress*100) + '%', pct);
     }
-    if(c%200===0&&onProgress)onProgress(c/nChunks);
-  }
-  return out;
-}
-
-// ── Offline DSP render: HP → LP → Compressor → Gain via OfflineAudioContext ──
-async function vidRenderDSP(gatedArray,sr,boost){
-  const offCtx=new OfflineAudioContext(1,gatedArray.length,sr);
-  const buf=offCtx.createBuffer(1,gatedArray.length,sr);
-  buf.copyToChannel(gatedArray,0);
-  const src=offCtx.createBufferSource();src.buffer=buf;
-  const hp=offCtx.createBiquadFilter();hp.type='highpass';hp.frequency.value=70;hp.Q.value=.5;  // lower = picks up deeper voices
-  const lp=offCtx.createBiquadFilter();lp.type='lowpass';lp.frequency.value=5000;lp.Q.value=.6;  // wider = more voice harmonics
-  const lowBoost=offCtx.createBiquadFilter();lowBoost.type='peaking';lowBoost.frequency.value=300;lowBoost.Q.value=0.8;lowBoost.gain.value=5;  // pull up low voice body
-  const presence=offCtx.createBiquadFilter();presence.type='peaking';presence.frequency.value=2200;presence.Q.value=1.1;presence.gain.value=4;
-  const comp=offCtx.createDynamicsCompressor();
-  comp.threshold.value=-55;comp.knee.value=8;comp.ratio.value=14;comp.attack.value=.001;comp.release.value=.08;  // catch quiet voice peaks
-  const gain=offCtx.createGain();gain.gain.value=boost;
-  src.connect(hp);hp.connect(lowBoost);lowBoost.connect(lp);lp.connect(presence);presence.connect(comp);comp.connect(gain);gain.connect(offCtx.destination);
-  src.start(0);
-  return await offCtx.startRendering();
-}
-
-// ── WAV encoder ──
-function vidBufferToWav(buffer){
-  const sr=buffer.sampleRate,samples=buffer.getChannelData(0);
-  const dataSize=samples.length*2;
-  const arrBuf=new ArrayBuffer(44+dataSize);
-  const view=new DataView(arrBuf);
-  function ws(off,str){for(let i=0;i<str.length;i++)view.setUint8(off+i,str.charCodeAt(i));}
-  ws(0,'RIFF');view.setUint32(4,36+dataSize,true);ws(8,'WAVE');
-  ws(12,'fmt ');view.setUint32(16,16,true);view.setUint16(20,1,true);
-  view.setUint16(22,1,true);view.setUint32(24,sr,true);
-  view.setUint32(28,sr*2,true);view.setUint16(32,2,true);view.setUint16(34,16,true);
-  ws(36,'data');view.setUint32(40,dataSize,true);
-  let off=44;
-  for(let i=0;i<samples.length;i++,off+=2){
-    let s=Math.max(-1,Math.min(1,samples[i]));
-    view.setInt16(off,s<0?s*0x8000:s*0x7FFF,true);
-  }
-  return new Uint8Array(arrBuf);
-}
-
-function cancelVideoProcess(){
-  vidProcessing=false;
-  vidSetStage('Cancelled',0);
-}
-
-async function processVideo(){
-  if(!vidSelectedFile||vidProcessing)return;
-  vidProcessing=true;
-  vidSetErr(null);
-  document.getElementById('vidResult').style.display='none';
-  document.getElementById('vidProcessBtn').disabled=true;
-  document.getElementById('vidProcessBtn').style.opacity='.4';
-  document.getElementById('vidProcessBtn').style.cursor='not-allowed';
-
-  try{
-    await loadVidFFmpeg();
-
-    vidSetStage('Writing video to virtual filesystem…',12);
-    const {fetchFile}=window.FFmpegUtil;
-    const inputName='input'+(vidSelectedFile.name.match(/\.[^.]+$/)?.[0]||'.mp4');
-    await vidFFmpeg.writeFile(inputName, await fetchFile(vidSelectedFile));
-
-    vidSetStage('Extracting audio track…',22);
-    await vidFFmpeg.exec(['-i',inputName,'-vn','-acodec','pcm_s16le','-ar','44100','-ac','1','extracted.wav']);
-
-    vidSetStage('Reading extracted audio…',35);
-    const wavData=await vidFFmpeg.readFile('extracted.wav');
-    const wavBlob=new Blob([wavData.buffer],{type:'audio/wav'});
-    await vidFFmpeg.deleteFile('extracted.wav');
-
-    vidSetStage('Decoding audio samples…',42);
-    const tmpCtx=new(window.AudioContext||window.webkitAudioContext)();
-    const arrBuf=await wavBlob.arrayBuffer();
-    const audioBuf=await tmpCtx.decodeAudioData(arrBuf);
-    const channelData=audioBuf.getChannelData(0);
-
-    vidSetStage('Analyzing noise floor & gating non-voice audio…',50);
-    const gated=vidGateOffline(channelData,audioBuf.sampleRate,vidStrength,(p)=>{
-      vidSetStage('Analyzing noise floor & gating non-voice audio…',50+p*20);
-    });
-
-    vidSetStage('Running voice DSP chain (filters + compressor + boost)…',72);
-    const rendered=await vidRenderDSP(gated,audioBuf.sampleRate,vidBoost);
-    tmpCtx.close();
-
-    vidSetStage('Encoding processed audio…',80);
-    const outWavBytes=vidBufferToWav(rendered);
-    await vidFFmpeg.writeFile('processed.wav',outWavBytes);
-
-    vidSetStage('Remuxing audio into original video…',86);
-    await vidFFmpeg.exec(['-i',inputName,'-i','processed.wav','-map','0:v:0','-map','1:a:0','-c:v','copy','-c:a','aac','-b:a','192k','-shortest','output.mp4']);
-
-    vidSetStage('Finalizing…',96);
-    const outData=await vidFFmpeg.readFile('output.mp4');
-    const outBlob=new Blob([outData.buffer],{type:'video/mp4'});
-    const outUrl=URL.createObjectURL(outBlob);
-
-    // Cleanup VFS
-    try{await vidFFmpeg.deleteFile(inputName);}catch(_){}
-    try{await vidFFmpeg.deleteFile('processed.wav');}catch(_){}
-    try{await vidFFmpeg.deleteFile('output.mp4');}catch(_){}
-
-    vidSetStage('Done',100);
-    document.getElementById('vidPreview').src=outUrl;
-    document.getElementById('vidDownload').href=outUrl;
-    const origName=vidSelectedFile.name.replace(/\.[^.]+$/,'');
-    document.getElementById('vidDownload').download=`${origName}_amplified.mp4`;
-    document.getElementById('vidResult').style.display='block';
-  }catch(e){
-    console.error(e);
-    vidSetErr('Processing failed: '+(e.message||e));
-  }finally{
-    vidProcessing=false;
-    document.getElementById('vidProcessBtn').disabled=false;
-    document.getElementById('vidProcessBtn').style.opacity='1';
-    document.getElementById('vidProcessBtn').style.cursor='pointer';
-  }
-}
-
-if('serviceWorker' in navigator){
-  window.addEventListener('load', ()=>{
-    navigator.serviceWorker.register('/sw.js').then(reg=>{
-      console.log('SW registered:', reg.scope);
-    }).catch(err=>{
-      console.log('SW registration failed:', err);
-    });
   });
+
+  const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+
+  // Fetch core JS with progress
+  const coreJsUrl  = await fetchWithProgress(baseURL+'/ffmpeg-core.js',  'Downloading engine core…', 8, 35);
+  const coreWasmUrl= await fetchWithProgress(baseURL+'/ffmpeg-core.wasm','Downloading WASM module…',35, 65);
+
+  vidSetStage('Initializing engine…', 66);
+  await vidFFmpeg.load({ coreURL: coreJsUrl, wasmURL: coreWasmUrl });
+
+  vidFFmpegLoaded = true;
+  vidSetStage('Engine ready', 68);
+  vidLog('FFmpeg WASM engine loaded and ready');
 }
-</script>
-</body>
-</html>
+
+>
