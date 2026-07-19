@@ -2610,6 +2610,2791 @@ async function loadVidFFmpeg(){
   vidSetStage('Initializing engine…', 66);
   await vidFFmpeg.load({ coreURL: coreJsUrl, wasmURL: coreWasmUrl });
 
+vidFFmpegLoaded = true;
+  vidSetStage('Engine ready', 68);
+  vidLog('FFmpeg WASM engine loaded and ready');
+}
+
+// ── Offline noise gate (percentile-based, no calibration silence needed) ──
+function vidGateOffline(channelData, sr, strength, onProgress){
+  const N=channelData.length, chunkSize=2048, nChunks=Math.ceil(N/chunkSize);
+  const bandEnergy=new Array(nChunks);
+  for(let c=0;c<nChunks;c++){
+    const start=c*chunkSize,end=Math.min(N,start+chunkSize),bSz=Math.max(1,Math.floor((end-start)/8));
+    const bE=new Float32Array(8);
+    for(let b=0;b<8;b++){let e=0,cnt=0;for(let i=start+b*bSz;i<Math.min(end,start+(b+1)*bSz);i++){e+=channelData[i]*channelData[i];cnt++;}bE[b]=cnt>0?Math.sqrt(e/cnt):0;}
+    bandEnergy[c]=bE;
+  }
+  // 10th percentile per band = noise floor
+  const noiseProfile=new Float32Array(8);
+  for(let b=0;b<8;b++){
+    const vals=bandEnergy.map(f=>f[b]).sort((a,c)=>a-c);
+    noiseProfile[b]=(vals[Math.floor(vals.length*0.10)]||0)*1.1;
+  }
+  const VOICE=[0,1,2,3,4,5]; // include band 0 for low voices
+  const sensitivity=0.7;
+  const out=new Float32Array(N);
+  let gateSmooth=0;
+  for(let c=0;c<nChunks;c++){
+    const bE=bandEnergy[c],start=c*chunkSize,end=Math.min(N,start+chunkSize);
+    for(let i=start;i<end;i++){
+      const band=Math.min(7,Math.floor(((i-start)/(end-start))*8));
+      const nRef=noiseProfile[band]*strength,sig=bE[band];
+      const isV=VOICE.includes(band),snr=sig/(nRef+1e-10),snrT=0.6+sensitivity*1.8;
+      const tg=(snr>snrT&&isV)?1.0:(snr>snrT*0.5&&isV)?Math.pow((snr-snrT*0.5)/(snrT*0.5),0.5):0.0;
+      const alpha=tg>gateSmooth?0.005:0.08;
+      gateSmooth=gateSmooth*(1-alpha)+tg*alpha;
+      const sub=Math.max(0,1-(nRef/(sig+1e-10))*strength);
+      out[i]=channelData[i]*gateSmooth*Math.max(0.18,sub);
+    }
+    if(c%200===0&&onProgress)onProgress(c/nChunks);
+  }
+  return out;
+}
+
+// ── Offline DSP render via OfflineAudioContext ──
+async function vidRenderDSP(gatedArray, sr, boost){
+  const offCtx=new OfflineAudioContext(1,gatedArray.length,sr);
+  const buf=offCtx.createBuffer(1,gatedArray.length,sr);
+  buf.copyToChannel(gatedArray,0);
+  const src=offCtx.createBufferSource(); src.buffer=buf;
+  const hp=offCtx.createBiquadFilter(); hp.type='highpass'; hp.frequency.value=70; hp.Q.value=0.5;
+  const lowBoost=offCtx.createBiquadFilter(); lowBoost.type='peaking'; lowBoost.frequency.value=300; lowBoost.Q.value=0.8; lowBoost.gain.value=5;
+  const lp=offCtx.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=5000; lp.Q.value=0.6;
+  const presence=offCtx.createBiquadFilter(); presence.type='peaking'; presence.frequency.value=2200; presence.Q.value=1.1; presence.gain.value=4;
+  const comp=offCtx.createDynamicsCompressor();
+  comp.threshold.value=-55; comp.knee.value=8; comp.ratio.value=14; comp.attack.value=0.001; comp.release.value=0.08;
+  const gain=offCtx.createGain(); gain.gain.value=boost;
+  src.connect(hp); hp.connect(lowBoost); lowBoost.connect(lp); lp.connect(presence); presence.connect(comp); comp.connect(gain); gain.connect(offCtx.destination);
+  src.start(0);
+  return await offCtx.startRendering();
+}
+
+// ── WAV encoder ──
+function vidBufferToWav(buffer){
+  const sr=buffer.sampleRate,samples=buffer.getChannelData(0),dataSize=samples.length*2;
+  const arrBuf=new ArrayBuffer(44+dataSize),view=new DataView(arrBuf);
+  function ws(off,str){for(let i=0;i<str.length;i++)view.setUint8(off+i,str.charCodeAt(i));}
+  ws(0,'RIFF');view.setUint32(4,36+dataSize,true);ws(8,'WAVE');
+  ws(12,'fmt ');view.setUint32(16,16,true);view.setUint16(20,1,true);
+  view.setUint16(22,1,true);view.setUint32(24,sr,true);
+  view.setUint32(28,sr*2,true);view.setUint16(32,2,true);view.setUint16(34,16,true);
+  ws(36,'data');view.setUint32(40,dataSize,true);
+  let off=44;
+  for(let i=0;i<samples.length;i++,off+=2){
+    const s=Math.max(-1,Math.min(1,samples[i]));
+    view.setInt16(off,s<0?s*0x8000:s*0x7FFF,true);
+  }
+  return new Uint8Array(arrBuf);
+}
+
+function cancelVideoProcess(){ vidProcessing=false; vidSetStage('Cancelled',0); }
+
+async function processVideo(){
+  if(!vidSelectedFile||vidProcessing) return;
+  vidProcessing=true;
+  vidSetErr(null);
+  document.getElementById('vidResult').style.display='none';
+  document.getElementById('vidProgWrap').style.display='block';
+  document.getElementById('vidStageTxt').textContent='// STARTING…';
+  document.getElementById('vidPct').textContent='0%';
+  document.getElementById('vidProgBar').style.width='0%';
+  document.getElementById('vidLog').textContent='';
+  const btn=document.getElementById('vidProcessBtn');
+  btn.disabled=true; btn.style.opacity='.4'; btn.style.cursor='not-allowed';
+
+  try{
+    // ── Load engine (shows real download progress) ──
+    await loadVidFFmpeg();
+
+    vidSetStage('Reading video file into memory…', 70);
+    const {fetchFile}=window.FFmpegUtil;
+    const ext=(vidSelectedFile.name.match(/\.[^.]+$/)||['.mp4'])[0];
+    const inputName='input'+ext;
+    await vidFFmpeg.writeFile(inputName, await fetchFile(vidSelectedFile));
+
+    vidSetStage('Extracting audio track from video…', 76);
+    vidLog('Running ffmpeg audio extraction...');
+    await vidFFmpeg.exec(['-i',inputName,'-vn','-acodec','pcm_s16le','-ar','44100','-ac','1','extracted.wav']);
+
+    vidSetStage('Reading audio data…', 80);
+    const wavData=await vidFFmpeg.readFile('extracted.wav');
+    const wavBlob=new Blob([wavData.buffer],{type:'audio/wav'});
+    await vidFFmpeg.deleteFile('extracted.wav');
+
+    vidSetStage('Decoding audio samples…', 82);
+    const tmpCtx=new(window.AudioContext||window.webkitAudioContext)();
+    const audioBuf=await tmpCtx.decodeAudioData(await wavBlob.arrayBuffer());
+    const channelData=audioBuf.getChannelData(0);
+
+    vidSetStage('Analyzing noise floor — detecting voice vs background…', 84);
+    const gated=vidGateOffline(channelData,audioBuf.sampleRate,
+      parseFloat(document.getElementById('vidStr').value)||0.65,
+      (p)=>{ vidSetStage('Gating non-voice audio… '+Math.round(p*100)+'%', 84+p*4); }
+    );
+
+    vidSetStage('Applying voice clarity chain — filter → compress → boost…', 89);
+    const rendered=await vidRenderDSP(gated, audioBuf.sampleRate,
+      parseFloat(document.getElementById('vidBoost').value)||5.0
+    );
+    tmpCtx.close();
+
+    vidSetStage('Encoding cleaned audio…', 93);
+    const outWavBytes=vidBufferToWav(rendered);
+    await vidFFmpeg.writeFile('processed.wav',outWavBytes);
+
+    vidSetStage('Merging voice audio back into video…', 95);
+    vidLog('Remuxing audio + video streams...');
+    await vidFFmpeg.exec(['-i',inputName,'-i','processed.wav','-map','0:v:0','-map','1:a:0','-c:v','copy','-c:a','aac','-b:a','192k','-shortest','output.mp4']);
+
+    vidSetStage('Packaging output…', 98);
+    const outData=await vidFFmpeg.readFile('output.mp4');
+    const outBlob=new Blob([outData.buffer],{type:'video/mp4'});
+    const outUrl=URL.createObjectURL(outBlob);
+
+    // Cleanup
+    try{await vidFFmpeg.deleteFile(inputName);}catch(_){}
+    try{await vidFFmpeg.deleteFile('processed.wav');}catch(_){}
+    try{await vidFFmpeg.deleteFile('output.mp4');}catch(_){}
+
+    vidSetStage('Done — voice isolated and amplified ✓', 100);
+    document.getElementById('vidPreview').src=outUrl;
+    document.getElementById('vidDownload').href=outUrl;
+    const origName=vidSelectedFile.name.replace(/\.[^.]+$/,'');
+    document.getElementById('vidDownload').download=origName+'_voice_amplified.mp4';
+    document.getElementById('vidResult').style.display='block';
+    vidLog('Processing complete — '+fmtVidBytes(outBlob.size));
+
+  }catch(e){
+    console.error(e);
+    vidSetErr('Processing failed: '+(e.message||String(e)));
+    vidLog('Error: '+e.message);
+  }finally{
+    vidProcessing=false;
+    btn.disabled=false; btn.style.opacity='1'; btn.style.cursor='pointer';
+  }
+}
+
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('/sw.js').then(reg=>{
+    console.log('SW registered');
+  }).catch(err=>{
+    console.log('SW registration failed (normal in dev)');
+  });
+}
+</script>
+E html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<title>AMPLIFY — Voice Isolation</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Outfit:wght@300;400;500;600;700&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet"/>
+<style>
+/* ═══════════════════════════════════════════════════════
+   STAINLESS STEEL + PAINTED GLASS GLOSS — MIDNIGHT GALAXY
+   Design tokens
+═══════════════════════════════════════════════════════ */
+:root{
+  /* Midnight Galaxy palette */
+  --gal-1:#07050f;
+  --gal-2:#0f0b1e;
+  --gal-3:#160f2e;
+  --gal-4:#1e1440;
+  --gal-5:#2b1e5a;
+
+  /* Accent spectrum */
+  --violet:#7c3aed;
+  --purple:#a855f7;
+  --lavender:#c084fc;
+  --indigo:#818cf8;
+  --silver:#e6e6fa;
+  --silver-dim:#9090b8;
+  --pink:#e879f9;
+  --rose:#f472b6;
+
+  /* Steel tones */
+  --steel-hi:#d4d8e8;
+  --steel-mid:#8890a8;
+  --steel-low:#3a3f54;
+  --steel-dark:#1a1d28;
+
+  /* Glass */
+  --glass-white:rgba(255,255,255,.06);
+  --glass-purple:rgba(139,92,246,.08);
+  --glass-border:rgba(255,255,255,.1);
+  --glass-shine:rgba(255,255,255,.18);
+
+  /* Functional */
+  --red:#f472b6;
+  --amber:#fbbf24;
+  --green:#a78bfa; /* repurposed for "active" state in galaxy theme */
+  --bg:var(--gal-1);
+  --border:rgba(124,58,237,.18);
+  --border2:rgba(168,85,247,.28);
+  --text:var(--silver);
+  --text-dim:var(--silver-dim);
+  --text-mute:#3d3560;
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+
+/* ── SCANLINES ── */
+body::before{
+  content:'';position:fixed;inset:0;pointer-events:none;z-index:9998;
+  background:repeating-linear-gradient(
+    0deg,transparent,transparent 3px,
+    rgba(0,0,0,.06) 3px,rgba(0,0,0,.06) 4px
+  );
+}
+
+body{
+  background:
+    radial-gradient(ellipse 140% 90% at 50% -5%, #2a1060 0%, #110828 40%, var(--gal-1) 75%);
+  font-family:'Share Tech Mono',monospace;
+  color:var(--text);min-height:100vh;
+  display:flex;flex-direction:column;align-items:center;
+  padding:58px 14px 40px;overflow-x:hidden;
+}
+
+/* ── STARFIELD ── */
+.stars{position:fixed;inset:0;pointer-events:none;z-index:0;overflow:hidden}
+.stars::before,.stars::after{
+  content:'';position:absolute;inset:0;
+}
+.stars::before{
+  background-image:
+    radial-gradient(1px 1px at 8% 12%,rgba(230,230,250,.9) 0%,transparent 100%),
+    radial-gradient(1px 1px at 22% 6%,rgba(192,132,252,.7) 0%,transparent 100%),
+    radial-gradient(1.5px 1.5px at 37% 18%,rgba(230,230,250,.8) 0%,transparent 100%),
+    radial-gradient(1px 1px at 51% 4%,rgba(129,140,248,.9) 0%,transparent 100%),
+    radial-gradient(1px 1px at 64% 14%,rgba(230,230,250,.6) 0%,transparent 100%),
+    radial-gradient(2px 2px at 78% 8%,rgba(192,132,252,.8) 0%,transparent 100%),
+    radial-gradient(1px 1px at 91% 20%,rgba(230,230,250,.7) 0%,transparent 100%),
+    radial-gradient(1px 1px at 14% 35%,rgba(129,140,248,.5) 0%,transparent 100%),
+    radial-gradient(1px 1px at 48% 30%,rgba(230,230,250,.6) 0%,transparent 100%),
+    radial-gradient(1px 1px at 83% 42%,rgba(192,132,252,.7) 0%,transparent 100%),
+    radial-gradient(1px 1px at 5% 58%,rgba(230,230,250,.4) 0%,transparent 100%),
+    radial-gradient(1px 1px at 28% 65%,rgba(129,140,248,.5) 0%,transparent 100%),
+    radial-gradient(1.5px 1.5px at 67% 55%,rgba(230,230,250,.7) 0%,transparent 100%),
+    radial-gradient(1px 1px at 95% 68%,rgba(192,132,252,.5) 0%,transparent 100%),
+    radial-gradient(1px 1px at 43% 80%,rgba(230,230,250,.4) 0%,transparent 100%),
+    radial-gradient(1px 1px at 76% 88%,rgba(129,140,248,.6) 0%,transparent 100%),
+    radial-gradient(2px 2px at 18% 92%,rgba(192,132,252,.5) 0%,transparent 100%),
+    radial-gradient(1px 1px at 59% 96%,rgba(230,230,250,.3) 0%,transparent 100%);
+  animation:twinkle-a 7s ease-in-out infinite alternate;
+}
+.stars::after{
+  background-image:
+    radial-gradient(1px 1px at 33% 22%,rgba(230,230,250,.5) 0%,transparent 100%),
+    radial-gradient(1px 1px at 72% 31%,rgba(192,132,252,.6) 0%,transparent 100%),
+    radial-gradient(1px 1px at 16% 48%,rgba(129,140,248,.4) 0%,transparent 100%),
+    radial-gradient(1.5px 1.5px at 88% 53%,rgba(230,230,250,.6) 0%,transparent 100%),
+    radial-gradient(1px 1px at 55% 70%,rgba(192,132,252,.4) 0%,transparent 100%),
+    radial-gradient(1px 1px at 3% 78%,rgba(129,140,248,.5) 0%,transparent 100%),
+    radial-gradient(1px 1px at 41% 87%,rgba(230,230,250,.5) 0%,transparent 100%),
+    radial-gradient(2px 2px at 92% 12%,rgba(192,132,252,.7) 0%,transparent 100%);
+  animation:twinkle-b 9s ease-in-out infinite alternate;
+}
+@keyframes twinkle-a{0%{opacity:.5}50%{opacity:1}100%{opacity:.7}}
+@keyframes twinkle-b{0%{opacity:.8}50%{opacity:.4}100%{opacity:.9}}
+
+/* ── NEBULA GLOW ── */
+.nebula{
+  position:fixed;pointer-events:none;z-index:0;border-radius:50%;filter:blur(80px);
+}
+.nebula-1{
+  width:500px;height:300px;top:-80px;left:-100px;
+  background:radial-gradient(ellipse,rgba(124,58,237,.12) 0%,transparent 70%);
+  animation:nebula-drift 20s ease-in-out infinite alternate;
+}
+.nebula-2{
+  width:400px;height:250px;top:30%;right:-120px;
+  background:radial-gradient(ellipse,rgba(232,121,249,.08) 0%,transparent 70%);
+  animation:nebula-drift 15s ease-in-out infinite alternate-reverse;
+}
+.nebula-3{
+  width:600px;height:200px;bottom:10%;left:50%;transform:translateX(-50%);
+  background:radial-gradient(ellipse,rgba(129,140,248,.07) 0%,transparent 70%);
+  animation:nebula-drift 25s ease-in-out infinite alternate;
+}
+@keyframes nebula-drift{
+  0%{transform:translate(0,0) scale(1)}
+  100%{transform:translate(30px,20px) scale(1.1)}
+}
+
+/* ══════════════════════════════════════════════
+   TOP BAR — stainless steel strip
+══════════════════════════════════════════════ */
+#topbar{
+  position:fixed;top:0;left:0;right:0;z-index:9999;
+  display:flex;align-items:center;justify-content:space-between;
+  padding:0 18px;height:50px;
+  background:linear-gradient(180deg,
+    rgba(60,50,90,.98) 0%,
+    rgba(20,15,40,.97) 100%
+  );
+  border-bottom:1px solid rgba(168,85,247,.2);
+  box-shadow:0 1px 0 rgba(255,255,255,.06),0 4px 24px rgba(0,0,0,.6);
+}
+/* Glass sheen on topbar */
+#topbar::after{
+  content:'';position:absolute;inset:0 0 50% 0;pointer-events:none;
+  background:linear-gradient(180deg,rgba(255,255,255,.05) 0%,transparent 100%);
+}
+.tb-brand{display:flex;align-items:baseline;gap:10px;position:relative;z-index:1}
+.tb-logo{
+  font-family:'Orbitron',monospace;font-size:15px;font-weight:900;
+  letter-spacing:.14em;
+  background:linear-gradient(135deg,var(--steel-hi) 0%,var(--lavender) 50%,var(--indigo) 100%);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+  filter:drop-shadow(0 0 12px rgba(192,132,252,.5));
+}
+.tb-ver{font-size:8px;letter-spacing:.25em;color:var(--text-mute);font-family:'Share Tech Mono',monospace}
+.tb-right{display:flex;align-items:center;gap:5px;position:relative;z-index:1}
+
+/* ── GLASS PILL BUTTONS ── */
+.tb-btn{
+  height:30px;padding:0 13px;font-size:9px;letter-spacing:.16em;
+  border-radius:15px;cursor:pointer;font-family:'Share Tech Mono',monospace;
+  position:relative;overflow:hidden;transition:all .2s;white-space:nowrap;
+  /* Steel base */
+  background:linear-gradient(180deg,
+    rgba(255,255,255,.12) 0%,
+    rgba(255,255,255,.04) 40%,
+    rgba(0,0,0,.2) 100%
+  );
+  border:1px solid rgba(255,255,255,.1);
+  color:var(--silver-dim);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.15) inset,
+    0 -1px 0 rgba(0,0,0,.3) inset,
+    0 2px 8px rgba(0,0,0,.4);
+}
+/* Glass shine sweep */
+.tb-btn::before{
+  content:'';position:absolute;top:0;left:-100%;width:60%;height:50%;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.15),transparent);
+  transition:left .4s;
+}
+.tb-btn:hover::before{left:140%}
+.tb-btn:hover{
+  color:var(--silver);
+  border-color:rgba(255,255,255,.18);
+  box-shadow:0 1px 0 rgba(255,255,255,.2) inset,0 -1px 0 rgba(0,0,0,.3) inset,0 4px 16px rgba(0,0,0,.5);
+}
+.tb-btn:active{transform:translateY(1px);box-shadow:0 1px 0 rgba(255,255,255,.1) inset,0 0 4px rgba(0,0,0,.6)}
+
+/* Active states */
+.tb-btn.on{
+  background:linear-gradient(180deg,rgba(168,85,247,.4) 0%,rgba(124,58,237,.2) 100%);
+  border-color:rgba(192,132,252,.5);color:var(--lavender);
+  box-shadow:0 1px 0 rgba(255,255,255,.2) inset,0 0 16px rgba(168,85,247,.3),0 0 32px rgba(168,85,247,.1);
+}
+.tb-btn.active-amber{
+  background:linear-gradient(180deg,rgba(251,191,36,.3) 0%,rgba(251,191,36,.1) 100%);
+  border-color:rgba(251,191,36,.4);color:var(--amber);
+  box-shadow:0 1px 0 rgba(255,255,255,.2) inset,0 0 16px rgba(251,191,36,.25);
+}
+.tb-btn.active-red{
+  background:linear-gradient(180deg,rgba(244,114,182,.3) 0%,rgba(244,114,182,.1) 100%);
+  border-color:rgba(244,114,182,.4);color:var(--rose);
+  box-shadow:0 1px 0 rgba(255,255,255,.2) inset,0 0 16px rgba(244,114,182,.25);
+}
+.tb-btn.active-ultra{
+  background:linear-gradient(180deg,rgba(232,121,249,.4) 0%,rgba(168,85,247,.2) 100%);
+  border-color:rgba(232,121,249,.5);color:var(--pink);
+  box-shadow:0 1px 0 rgba(255,255,255,.2) inset,0 0 20px rgba(232,121,249,.4);
+  animation:ultra-pulse 1.4s ease-in-out infinite;
+}
+@keyframes ultra-pulse{
+  0%,100%{box-shadow:0 1px 0 rgba(255,255,255,.2) inset,0 0 12px rgba(232,121,249,.3)}
+  50%{box-shadow:0 1px 0 rgba(255,255,255,.2) inset,0 0 28px rgba(232,121,249,.6),0 0 60px rgba(232,121,249,.15)}
+}
+
+/* ENGAGE topbar button */
+#engageBtnTop{
+  background:linear-gradient(180deg,rgba(168,85,247,.35) 0%,rgba(109,40,217,.25) 100%);
+  border-color:rgba(192,132,252,.4);color:var(--lavender);
+  box-shadow:0 1px 0 rgba(255,255,255,.2) inset,0 0 16px rgba(168,85,247,.2),0 2px 8px rgba(0,0,0,.5);
+}
+#engageBtnTop:hover{
+  background:linear-gradient(180deg,rgba(168,85,247,.5) 0%,rgba(109,40,217,.35) 100%);
+  box-shadow:0 1px 0 rgba(255,255,255,.25) inset,0 0 24px rgba(168,85,247,.4);
+}
+#engageBtnTop.active-red{
+  background:linear-gradient(180deg,rgba(244,114,182,.4) 0%,rgba(190,24,93,.25) 100%);
+  border-color:rgba(244,114,182,.5);color:var(--rose);
+  box-shadow:0 1px 0 rgba(255,255,255,.2) inset,0 0 20px rgba(244,114,182,.35);
+}
+
+/* Source badge */
+#srcBadge{
+  height:30px;padding:0 12px;font-size:9px;letter-spacing:.16em;
+  border-radius:15px;border:1px solid rgba(255,255,255,.08);
+  background:linear-gradient(180deg,rgba(255,255,255,.06) 0%,rgba(0,0,0,.1) 100%);
+  color:var(--text-mute);display:flex;align-items:center;gap:6px;
+  white-space:nowrap;font-family:'Share Tech Mono',monospace;
+  transition:all .3s;min-width:150px;
+  box-shadow:0 1px 0 rgba(255,255,255,.1) inset,0 2px 8px rgba(0,0,0,.4);
+}
+.badge-dot{width:5px;height:5px;border-radius:50%;background:currentColor;flex-shrink:0;transition:all .3s}
+#srcBadge.human{
+  background:linear-gradient(180deg,rgba(167,139,250,.25) 0%,rgba(124,58,237,.15) 100%);
+  border-color:rgba(192,132,252,.4);color:var(--lavender);
+}
+#srcBadge.human .badge-dot{box-shadow:0 0 6px var(--lavender),0 0 12px rgba(192,132,252,.5)}
+#srcBadge.media{
+  background:linear-gradient(180deg,rgba(251,191,36,.2) 0%,rgba(251,191,36,.08) 100%);
+  border-color:rgba(251,191,36,.35);color:var(--amber);
+}
+#srcBadge.silence{color:var(--text-mute)}
+
+/* ══════════════════════════════════════════════
+   HEADER
+══════════════════════════════════════════════ */
+.header{text-align:center;margin-bottom:24px;position:relative;z-index:1}
+.tagline{font-size:9px;letter-spacing:.5em;color:var(--text-mute);margin-bottom:12px;font-family:'Share Tech Mono',monospace}
+h1{
+  font-family:'Orbitron',monospace;font-weight:900;font-size:52px;
+  letter-spacing:.08em;line-height:1;margin-bottom:4px;
+  background:linear-gradient(135deg,
+    var(--steel-hi) 0%,
+    var(--lavender) 35%,
+    var(--indigo) 65%,
+    var(--steel-hi) 100%
+  );
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+  filter:drop-shadow(0 0 30px rgba(192,132,252,.35));
+}
+.sub{font-size:9px;letter-spacing:.4em;color:var(--text-mute);font-family:'Share Tech Mono',monospace}
+
+/* ══════════════════════════════════════════════
+   MAIN PANEL — painted glass card
+══════════════════════════════════════════════ */
+.panel{
+  width:100%;max-width:720px;position:relative;z-index:1;
+  /* Painted glass base */
+  background:linear-gradient(160deg,
+    rgba(43,30,90,.75) 0%,
+    rgba(22,15,46,.85) 50%,
+    rgba(14,10,30,.9) 100%
+  );
+  border:1px solid rgba(168,85,247,.2);
+  border-radius:16px;
+  backdrop-filter:blur(24px) saturate(1.6);
+  -webkit-backdrop-filter:blur(24px) saturate(1.6);
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,.06) inset,        /* inner rim */
+    0 2px 0 rgba(255,255,255,.1) inset,            /* top glass shine */
+    0 -1px 0 rgba(0,0,0,.5) inset,                /* bottom shadow */
+    0 24px 80px rgba(0,0,0,.7),
+    0 0 60px rgba(124,58,237,.08),
+    0 0 120px rgba(124,58,237,.04);
+  overflow:hidden;
+}
+/* Top glass gloss strip */
+.panel::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:50%;pointer-events:none;
+  background:linear-gradient(180deg,
+    rgba(255,255,255,.07) 0%,
+    rgba(255,255,255,.02) 40%,
+    transparent 100%
+  );
+  border-radius:16px 16px 0 0;z-index:0;
+}
+/* Steel corner marks */
+.panel::after{
+  content:'';position:absolute;inset:0;pointer-events:none;
+  border-radius:16px;
+  border:1px solid rgba(255,255,255,.05);
+}
+
+/* ── STATUS BAR ── */
+.statusbar{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:10px 20px;border-bottom:1px solid rgba(168,85,247,.12);
+  background:rgba(0,0,0,.2);flex-wrap:wrap;gap:8px;position:relative;z-index:1;
+}
+.status-left{display:flex;align-items:center;gap:10px}
+.pulse-ring{position:relative;width:12px;height:12px;flex-shrink:0}
+.pulse-ring .ring{
+  position:absolute;inset:0;border-radius:50%;
+  background:var(--text-mute);transition:background .3s;
+}
+.pulse-ring.active .ring{
+  background:var(--lavender);
+  box-shadow:0 0 8px var(--lavender),0 0 16px rgba(192,132,252,.4);
+}
+.pulse-ring.active::before{
+  content:'';position:absolute;inset:-4px;border-radius:50%;
+  border:1px solid var(--lavender);opacity:.5;
+  animation:ring-pulse 1.6s ease-out infinite;
+}
+.pulse-ring.scanning .ring{
+  background:var(--amber);
+  box-shadow:0 0 8px var(--amber);
+}
+@keyframes ring-pulse{0%{transform:scale(1);opacity:.5}100%{transform:scale(2.4);opacity:0}}
+.status-label{
+  font-size:11px;letter-spacing:.25em;color:var(--text-mute);
+  font-family:'Outfit',sans-serif;font-weight:600;
+}
+.status-label.on{color:var(--silver)}
+.nf-display{font-size:9px;color:var(--text-mute);letter-spacing:.12em}
+.nf-display span{color:var(--silver-dim)}
+.voice-lock{font-size:9px;letter-spacing:.2em;color:var(--text-mute);transition:all .2s}
+.voice-lock.locked{color:var(--lavender);text-shadow:0 0 8px rgba(192,132,252,.5)}
+
+/* ── ERROR / ULTRA ── */
+.error-banner{
+  margin:10px 16px 0;padding:10px 14px;
+  border:1px solid rgba(244,114,182,.3);background:rgba(244,114,182,.06);
+  font-size:10px;color:var(--rose);letter-spacing:.1em;line-height:1.5;
+  border-radius:8px;
+}
+.ultra-badge{
+  display:none;margin:10px 16px;padding:9px 14px;
+  border:1px solid rgba(232,121,249,.4);background:rgba(232,121,249,.07);
+  font-size:9px;letter-spacing:.2em;color:var(--pink);text-align:center;
+  border-radius:8px;animation:ultra-pulse 1.4s ease-in-out infinite;
+}
+.ultra-badge.on{display:block}
+
+/* ── WAVEFORM SCOPE ── */
+.scope-wrap{padding:14px 16px 0;position:relative;z-index:1}
+.scope-label{font-size:8px;letter-spacing:.3em;color:var(--text-mute);margin-bottom:6px}
+.scope{
+  width:100%;height:60px;
+  background:rgba(0,0,0,.4);
+  border:1px solid rgba(168,85,247,.12);border-radius:8px;
+  position:relative;overflow:hidden;
+}
+.scope canvas{display:block;width:100%;height:100%}
+.scope::before{
+  content:'';position:absolute;left:0;right:0;top:50%;
+  height:1px;background:rgba(168,85,247,.08);pointer-events:none;
+}
+/* Scope gloss */
+.scope::after{
+  content:'';position:absolute;top:0;left:0;right:0;height:40%;pointer-events:none;
+  background:linear-gradient(180deg,rgba(255,255,255,.04) 0%,transparent 100%);
+  border-radius:8px 8px 0 0;
+}
+
+/* ── SPECTRUM + VU ── */
+.viz{padding:10px 16px 0;display:flex;gap:12px;align-items:flex-start;position:relative;z-index:1}
+.spectrum-wrap{flex:1}
+.spec-label{font-size:8px;letter-spacing:.3em;color:var(--text-mute);margin-bottom:6px}
+.spectrum{
+  display:flex;align-items:flex-end;gap:2px;height:68px;
+  background:rgba(0,0,0,.4);padding:4px 4px 0;
+  border:1px solid rgba(168,85,247,.1);border-radius:8px;overflow:hidden;
+}
+.bar{flex:1;min-height:1px;border-radius:2px 2px 0 0;transition:height .055s,opacity .055s}
+
+.vu-wrap{display:flex;gap:8px;padding-top:14px}
+.vu-col{display:flex;flex-direction:column;align-items:center;gap:4px}
+.vu-label{font-size:8px;letter-spacing:.2em;color:var(--text-mute)}
+.vu-meter{
+  width:16px;height:68px;
+  background:rgba(0,0,0,.5);
+  border:1px solid rgba(168,85,247,.12);border-radius:6px;
+  position:relative;display:flex;flex-direction:column-reverse;overflow:hidden;
+}
+.vu-fill{width:100%;transition:height .055s;border-radius:0 0 4px 4px}
+.vu-mark{position:absolute;width:100%;height:1px;background:rgba(255,255,255,.04)}
+.vu-val{font-size:8px;color:var(--text-mute);letter-spacing:.1em}
+
+/* ── CLASSIFIER ── */
+.classifier{
+  margin:14px 16px 0;padding:14px;
+  border:1px solid rgba(168,85,247,.12);
+  background:rgba(0,0,0,.3);border-radius:10px;position:relative;z-index:1;
+}
+.cls-header{font-size:8px;letter-spacing:.3em;color:var(--text-mute);margin-bottom:12px;display:flex;justify-content:space-between;align-items:center}
+.cls-header span{color:var(--silver-dim);font-family:'Outfit',sans-serif}
+.cls-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.cls-cell{display:flex;flex-direction:column;gap:5px}
+.cls-cell-label{font-size:8px;letter-spacing:.12em;color:var(--text-mute)}
+.cls-bar-wrap{height:3px;background:rgba(0,0,0,.5);border-radius:2px;overflow:hidden}
+.cls-bar{height:100%;width:0%;transition:width .15s;border-radius:2px}
+.cls-val{font-size:9px;letter-spacing:.1em;color:var(--silver-dim);font-family:'Outfit',sans-serif}
+.cls-verdict{
+  margin-top:12px;padding:9px 14px;font-size:10px;letter-spacing:.25em;
+  border:1px solid rgba(168,85,247,.15);text-align:center;color:var(--text-dim);
+  transition:all .3s;font-family:'Outfit',sans-serif;font-weight:600;
+  border-radius:8px;
+}
+.cls-verdict.v-human{
+  border-color:rgba(192,132,252,.4);color:var(--lavender);
+  background:rgba(168,85,247,.1);
+  box-shadow:0 0 20px rgba(168,85,247,.1),inset 0 1px 0 rgba(255,255,255,.1);
+}
+.cls-verdict.v-media{
+  border-color:rgba(251,191,36,.3);color:var(--amber);
+  background:rgba(251,191,36,.07);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.08);
+}
+.cls-verdict.v-mixed{
+  border-color:rgba(232,121,249,.25);color:var(--pink);
+  background:rgba(232,121,249,.06);
+}
+
+/* ── SOURCE MODE SWITCH — glass tabs ── */
+.src-switch{
+  margin:14px 16px 0;display:flex;
+  border:1px solid rgba(168,85,247,.15);border-radius:10px;overflow:hidden;
+  background:rgba(0,0,0,.3);position:relative;z-index:1;
+}
+.src-switch-btn{
+  flex:1;padding:11px 6px;font-size:9px;letter-spacing:.14em;
+  border:none;background:transparent;color:var(--text-mute);
+  cursor:pointer;font-family:'Share Tech Mono',monospace;
+  transition:all .2s;position:relative;overflow:hidden;
+}
+.src-switch-btn::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:50%;
+  background:linear-gradient(180deg,rgba(255,255,255,.04) 0%,transparent 100%);
+  pointer-events:none;
+}
+.src-switch-btn:not(:last-child){border-right:1px solid rgba(168,85,247,.1)}
+.src-switch-btn:hover{background:rgba(255,255,255,.04);color:var(--silver-dim)}
+.src-switch-btn.active-human{
+  background:linear-gradient(180deg,rgba(167,139,250,.25) 0%,rgba(124,58,237,.15) 100%);
+  color:var(--lavender);box-shadow:inset 0 1px 0 rgba(255,255,255,.15),0 0 20px rgba(167,139,250,.1);
+}
+.src-switch-btn.active-media{
+  background:linear-gradient(180deg,rgba(251,191,36,.2) 0%,rgba(251,191,36,.08) 100%);
+  color:var(--amber);box-shadow:inset 0 1px 0 rgba(255,255,255,.12);
+}
+.src-switch-btn.active-auto{
+  background:linear-gradient(180deg,rgba(129,140,248,.2) 0%,rgba(99,102,241,.1) 100%);
+  color:var(--indigo);box-shadow:inset 0 1px 0 rgba(255,255,255,.12);
+}
+.src-switch-label{display:block;font-size:7px;letter-spacing:.2em;margin-bottom:3px;opacity:.4}
+.src-mode-desc{
+  margin:0 16px;padding:7px 12px;font-size:9px;letter-spacing:.12em;line-height:1.6;
+  border:1px solid rgba(168,85,247,.1);border-top:none;
+  color:var(--text-mute);background:rgba(0,0,0,.2);border-radius:0 0 8px 8px;
+  position:relative;z-index:1;
+}
+
+/* ── MUTE STRIP — big glassy buttons ── */
+.mute-strip{
+  margin:10px 16px 0;display:flex;gap:8px;position:relative;z-index:1;
+}
+.mute-btn{
+  flex:1;padding:13px 10px;font-size:10px;letter-spacing:.18em;
+  border-radius:10px;cursor:pointer;font-family:'Share Tech Mono',monospace;
+  transition:all .2s;display:flex;align-items:center;justify-content:center;gap:8px;
+  position:relative;overflow:hidden;
+  /* Glass pill */
+  background:linear-gradient(160deg,rgba(255,255,255,.08) 0%,rgba(255,255,255,.02) 50%,rgba(0,0,0,.15) 100%);
+  border:1px solid rgba(255,255,255,.1);
+  color:var(--silver-dim);
+  box-shadow:0 1px 0 rgba(255,255,255,.12) inset,0 4px 16px rgba(0,0,0,.4);
+}
+.mute-btn::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:50%;
+  background:linear-gradient(180deg,rgba(255,255,255,.08) 0%,transparent 100%);pointer-events:none;
+}
+.mute-btn:hover{
+  background:linear-gradient(160deg,rgba(255,255,255,.13) 0%,rgba(255,255,255,.04) 50%,rgba(0,0,0,.1) 100%);
+  color:var(--silver);border-color:rgba(255,255,255,.18);
+  box-shadow:0 1px 0 rgba(255,255,255,.2) inset,0 6px 24px rgba(0,0,0,.5);
+}
+.mute-btn:active{transform:scale(.98);box-shadow:0 1px 0 rgba(255,255,255,.1) inset}
+.mute-btn .mute-icon{font-size:15px}
+.mute-btn.muted-human{
+  background:linear-gradient(160deg,rgba(244,114,182,.3) 0%,rgba(190,24,93,.15) 100%);
+  border-color:rgba(244,114,182,.4);color:var(--rose);
+  box-shadow:0 1px 0 rgba(255,255,255,.15) inset,0 0 20px rgba(244,114,182,.25),0 4px 16px rgba(0,0,0,.4);
+}
+.mute-btn.muted-media{
+  background:linear-gradient(160deg,rgba(244,114,182,.3) 0%,rgba(190,24,93,.15) 100%);
+  border-color:rgba(244,114,182,.4);color:var(--rose);
+  box-shadow:0 1px 0 rgba(255,255,255,.15) inset,0 0 20px rgba(244,114,182,.25),0 4px 16px rgba(0,0,0,.4);
+}
+
+/* ── CHAIN ── */
+.chain{
+  margin:14px 16px 0;padding:10px 12px;
+  border:1px solid rgba(168,85,247,.1);background:rgba(0,0,0,.25);
+  border-radius:8px;display:flex;align-items:center;gap:4px;
+  flex-wrap:wrap;position:relative;z-index:1;
+}
+.chain-node{
+  font-size:8px;letter-spacing:.1em;color:var(--text-mute);
+  padding:3px 8px;border:1px solid rgba(255,255,255,.06);border-radius:4px;
+  background:rgba(0,0,0,.2);transition:all .2s;
+}
+.chain-node.hot{
+  border-color:rgba(192,132,252,.3);color:var(--lavender);
+  background:rgba(168,85,247,.1);
+  box-shadow:0 0 8px rgba(168,85,247,.15);
+}
+.chain-arrow{font-size:8px;color:var(--text-mute)}
+
+/* ── PRESETS ── */
+.presets{padding:14px 16px 0;position:relative;z-index:1}
+.preset-label{font-size:8px;letter-spacing:.3em;color:var(--text-mute);margin-bottom:10px}
+.preset-buttons{display:flex;gap:6px;flex-wrap:wrap}
+.preset-btn{
+  padding:7px 13px;font-size:9px;letter-spacing:.14em;
+  border-radius:20px;cursor:pointer;font-family:'Share Tech Mono',monospace;
+  transition:all .2s;position:relative;overflow:hidden;
+  background:linear-gradient(180deg,rgba(255,255,255,.08) 0%,rgba(0,0,0,.15) 100%);
+  border:1px solid rgba(255,255,255,.08);color:var(--text-mute);
+  box-shadow:0 1px 0 rgba(255,255,255,.1) inset,0 2px 8px rgba(0,0,0,.3);
+}
+.preset-btn:hover{color:var(--silver-dim);border-color:rgba(255,255,255,.15)}
+.preset-btn.active{
+  background:linear-gradient(180deg,rgba(168,85,247,.35) 0%,rgba(109,40,217,.2) 100%);
+  border-color:rgba(192,132,252,.45);color:var(--lavender);
+  box-shadow:0 1px 0 rgba(255,255,255,.2) inset,0 0 16px rgba(168,85,247,.2),0 2px 8px rgba(0,0,0,.4);
+}
+
+/* ── CONTROLS ── */
+.controls{padding:16px;display:grid;grid-template-columns:1fr 1fr;gap:16px 32px;position:relative;z-index:1}
+.ctrl{display:flex;flex-direction:column;gap:8px}
+.ctrl-header{display:flex;justify-content:space-between;align-items:center}
+.ctrl-name{font-size:8px;letter-spacing:.2em;color:var(--silver-dim)}
+.ctrl-val{font-size:10px;color:var(--lavender);letter-spacing:.1em;font-family:'Outfit',sans-serif;font-weight:600}
+input[type=range]{width:100%;height:2px;appearance:none;-webkit-appearance:none;outline:none;border:none;cursor:pointer;border-radius:2px}
+input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;width:14px;height:14px;border-radius:50%;
+  background:linear-gradient(135deg,var(--steel-hi) 0%,var(--lavender) 100%);
+  cursor:pointer;box-shadow:0 0 8px rgba(192,132,252,.5),0 2px 4px rgba(0,0,0,.5);
+  border:1px solid rgba(255,255,255,.3);
+}
+input[type=range]::-moz-range-thumb{
+  width:14px;height:14px;border-radius:50%;
+  background:linear-gradient(135deg,var(--steel-hi) 0%,var(--lavender) 100%);
+  cursor:pointer;border:1px solid rgba(255,255,255,.3);
+  box-shadow:0 0 8px rgba(192,132,252,.5);
+}
+
+/* ── ENGAGE BUTTON — hero CTA ── */
+.engage-wrap{padding:10px 16px 24px;display:flex;justify-content:center;position:relative;z-index:1}
+.engage-btn{
+  width:260px;height:62px;font-size:12px;letter-spacing:.4em;
+  cursor:pointer;transition:all .25s;
+  font-family:'Orbitron',monospace;font-weight:700;
+  position:relative;overflow:hidden;border-radius:31px;
+}
+/* Shine sweep on engage */
+.engage-btn::before{
+  content:'';position:absolute;top:0;left:-100%;width:50%;height:100%;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.12),transparent);
+  transition:left .5s;
+}
+.engage-btn:hover::before{left:150%}
+.engage-btn::after{
+  content:'';position:absolute;top:0;left:0;right:0;height:50%;
+  background:linear-gradient(180deg,rgba(255,255,255,.12) 0%,transparent 100%);
+  pointer-events:none;
+}
+.engage-btn.off{
+  background:linear-gradient(160deg,rgba(139,92,246,.5) 0%,rgba(109,40,217,.3) 50%,rgba(76,29,149,.4) 100%);
+  border:1px solid rgba(192,132,252,.45);color:var(--lavender);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.2) inset,
+    0 0 30px rgba(139,92,246,.25),
+    0 0 60px rgba(139,92,246,.08),
+    0 8px 32px rgba(0,0,0,.6);
+}
+.engage-btn.off:hover{
+  background:linear-gradient(160deg,rgba(139,92,246,.65) 0%,rgba(109,40,217,.45) 50%,rgba(76,29,149,.55) 100%);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.25) inset,
+    0 0 40px rgba(139,92,246,.4),
+    0 0 80px rgba(139,92,246,.12),
+    0 8px 32px rgba(0,0,0,.7);
+  transform:translateY(-1px);
+}
+.engage-btn.on{
+  background:linear-gradient(160deg,rgba(244,114,182,.4) 0%,rgba(190,24,93,.25) 50%,rgba(131,24,67,.35) 100%);
+  border:1px solid rgba(244,114,182,.4);color:var(--rose);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.15) inset,
+    0 0 30px rgba(244,114,182,.2),
+    0 8px 32px rgba(0,0,0,.6);
+}
+.engage-btn:active{transform:translateY(1px) scale(.99)}
+
+/* ── CC PANEL ── */
+.cc-wrap{width:100%;max-width:720px;position:relative;z-index:1;margin-top:10px}
+.cc-bar{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:9px 16px;
+  background:linear-gradient(160deg,rgba(43,30,90,.75) 0%,rgba(14,10,30,.9) 100%);
+  border:1px solid rgba(168,85,247,.18);border-radius:12px 12px 0 0;
+  backdrop-filter:blur(16px);
+  box-shadow:0 1px 0 rgba(255,255,255,.06) inset;
+}
+.cc-label{font-size:8px;letter-spacing:.3em;color:var(--text-mute)}
+.cc-controls{display:flex;gap:6px;align-items:center}
+.cc-lang,.cc-copy,.cc-clear{
+  padding:4px 10px;font-size:9px;letter-spacing:.12em;
+  border-radius:12px;border:1px solid rgba(255,255,255,.08);
+  background:linear-gradient(180deg,rgba(255,255,255,.08) 0%,rgba(0,0,0,.1) 100%);
+  color:var(--silver-dim);cursor:pointer;font-family:'Share Tech Mono',monospace;
+  outline:none;transition:all .15s;
+  box-shadow:0 1px 0 rgba(255,255,255,.1) inset;
+}
+.cc-lang:hover,.cc-copy:hover,.cc-clear:hover{color:var(--silver);border-color:rgba(255,255,255,.15)}
+.cc-box{
+  min-height:72px;max-height:160px;overflow-y:auto;
+  background:rgba(7,5,15,.85);
+  border:1px solid rgba(168,85,247,.12);border-top:none;
+  padding:12px 16px;position:relative;border-radius:0 0 12px 12px;
+  backdrop-filter:blur(16px);
+}
+.cc-live{
+  font-size:14px;line-height:1.8;color:#666;margin-bottom:4px;min-height:24px;
+  border-left:2px solid rgba(192,132,252,.25);padding-left:10px;
+  font-style:italic;font-family:'Outfit',sans-serif;
+}
+.cc-live.active{color:var(--silver);border-left-color:var(--lavender)}
+.cc-history{font-size:13px;line-height:1.9;color:#444;padding-left:12px;font-family:'Outfit',sans-serif}
+.cc-history span{display:block;padding:1px 0;border-bottom:1px solid rgba(255,255,255,.02)}
+.cc-history span:last-child{color:#777}
+.cc-status{font-size:8px;letter-spacing:.2em;color:var(--text-mute);position:absolute;top:8px;right:12px}
+.cc-status.listening{color:rgba(192,132,252,.5)}
+.cc-status.error{color:rgba(244,114,182,.5)}
+.cc-no-support{padding:16px;font-size:10px;color:var(--text-dim);text-align:center}
+
+/* ── FOOTER ── */
+.footer{position:relative;z-index:1;margin-top:18px;font-size:8px;color:var(--text-mute);letter-spacing:.22em;text-align:center}
+
+
+/* ── NS PANEL ── */
+.ns-panel{margin:14px 16px 0;padding:14px;border:1px solid rgba(129,140,248,.15);background:rgba(0,0,0,.3);border-radius:10px;position:relative;z-index:1}
+.ns-header{display:flex;align-items:center;justify-content:space-between;font-size:8px;letter-spacing:.3em;color:var(--text-mute);margin-bottom:12px}
+.ns-badge{font-size:9px;letter-spacing:.16em;padding:3px 10px;border-radius:10px;border:1px solid rgba(255,255,255,.06);color:var(--text-mute);font-family:'Outfit',sans-serif;font-weight:600;transition:all .3s}
+.ns-badge.calibrating{border-color:rgba(251,191,36,.4);color:var(--amber);background:rgba(251,191,36,.07);animation:ns-pulse 1s ease-in-out infinite}
+.ns-badge.active{border-color:rgba(129,140,248,.4);color:var(--indigo);background:rgba(129,140,248,.08)}
+.ns-badge.paused{border-color:rgba(255,255,255,.08);color:var(--text-mute)}
+@keyframes ns-pulse{0%,100%{opacity:.6}50%{opacity:1}}
+.ns-targets{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+.ns-target{padding:5px 12px;font-size:9px;letter-spacing:.18em;border-radius:16px;border:1px solid rgba(255,255,255,.06);background:rgba(0,0,0,.2);color:var(--text-mute);display:flex;align-items:center;gap:6px;transition:all .3s}
+.ns-target.detected{border-color:rgba(129,140,248,.4);color:var(--indigo);background:rgba(129,140,248,.1);box-shadow:0 0 10px rgba(129,140,248,.15)}
+.tgt-dot{width:5px;height:5px;border-radius:50%;background:var(--text-mute);transition:all .3s;flex-shrink:0}
+.ns-target.detected .tgt-dot{background:var(--indigo);box-shadow:0 0 6px rgba(129,140,248,.6)}
+.ns-controls{display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap}
+.ns-btn{padding:7px 13px;font-size:9px;letter-spacing:.15em;border-radius:20px;cursor:pointer;font-family:'Share Tech Mono',monospace;transition:all .2s;background:linear-gradient(180deg,rgba(255,255,255,.08) 0%,rgba(0,0,0,.15) 100%);border:1px solid rgba(255,255,255,.08);color:var(--text-mute);box-shadow:0 1px 0 rgba(255,255,255,.1) inset}
+.ns-btn:hover{color:var(--silver-dim);border-color:rgba(255,255,255,.15)}
+.ns-btn.active{background:linear-gradient(180deg,rgba(129,140,248,.35) 0%,rgba(99,102,241,.2) 100%);border-color:rgba(129,140,248,.45);color:var(--indigo);box-shadow:0 1px 0 rgba(255,255,255,.2) inset,0 0 16px rgba(129,140,248,.2)}
+.ns-btn.calibrating{background:linear-gradient(180deg,rgba(251,191,36,.3) 0%,rgba(251,191,36,.1) 100%);border-color:rgba(251,191,36,.4);color:var(--amber);animation:ns-pulse 1s ease-in-out infinite}
+.ns-cal-btn{padding:7px 13px;font-size:9px;letter-spacing:.15em;border-radius:20px;cursor:pointer;font-family:'Share Tech Mono',monospace;transition:all .2s;background:linear-gradient(180deg,rgba(251,191,36,.2) 0%,rgba(251,191,36,.08) 100%);border:1px solid rgba(251,191,36,.3);color:var(--amber);box-shadow:0 1px 0 rgba(255,255,255,.1) inset}
+.ns-cal-btn:hover{background:linear-gradient(180deg,rgba(251,191,36,.35) 0%,rgba(251,191,36,.15) 100%)}
+.ns-reset-btn{padding:7px 11px;font-size:12px;border-radius:20px;cursor:pointer;background:rgba(0,0,0,.2);border:1px solid rgba(255,255,255,.06);color:var(--text-mute);transition:all .15s}
+.ns-reset-btn:hover{color:var(--silver-dim)}
+.ns-slider-row{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.ns-slider-label{font-size:8px;letter-spacing:.2em;color:var(--text-mute);white-space:nowrap;min-width:50px}
+.ns-slider-val{font-size:9px;color:var(--indigo);letter-spacing:.1em;min-width:36px;font-family:'Outfit',sans-serif;font-weight:600}
+.ns-instructions{font-size:8px;letter-spacing:.1em;line-height:1.8;color:var(--text-mute);padding:8px 10px;background:rgba(0,0,0,.2);border-radius:6px;border:1px solid rgba(255,255,255,.04);margin-top:8px}
+.ns-instructions b{color:var(--indigo)}
+/* ══════════════════════════════════════════════
+   OVERLAY MODE
+══════════════════════════════════════════════ */
+body.overlay-mode{background:transparent!important}
+body.overlay-mode .stars{display:none}
+body.overlay-mode .nebula{display:none}
+body.overlay-mode .header{display:none}
+body.overlay-mode .footer{display:none}
+body.overlay-mode .presets{display:none}
+body.overlay-mode .controls{display:none}
+body.overlay-mode .panel{background:rgba(14,10,30,.25)!important;backdrop-filter:blur(28px) saturate(2)}
+</style>
+  <!-- PWA META -->
+  <meta name="theme-color" content="#a855f7"/>
+  <meta name="mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <meta name="apple-mobile-web-app-title" content="AMPLIFY"/>
+  <link rel="manifest" href="/manifest.json"/>
+  <link rel="apple-touch-icon" href="/icon-192.png"/>
+  <link rel="icon" type="image/svg+xml" href="/icon.svg"/>
+  <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png"/>
+</head>
+<body>
+<div class="stars"></div>
+<div class="nebula nebula-1"></div>
+<div class="nebula nebula-2"></div>
+<div class="nebula nebula-3"></div>
+
+<!-- TOP BAR -->
+<div id="topbar">
+  <div class="tb-brand">
+    <span class="tb-logo">AMPLIFY</span>
+    <span class="tb-ver">v4.0 // SENTINEL</span>
+  </div>
+  <div class="tb-right">
+    <div id="srcBadge" class="silence"><span class="badge-dot"></span><span id="srcBadgeText">AWAITING</span></div>
+    <button class="tb-btn" id="overlayBtn" onclick="toggleOverlay()">⊞ OVERLAY</button>
+    <button class="tb-btn" id="ultraBtn" onclick="toggleUltra()">⚡ ULTRA</button>
+    <button class="tb-btn" id="ccBtn" onclick="toggleCC()">◉ CC</button>
+    <button class="tb-btn" id="videoBtn" onclick="openVideoModal()">🎬 VIDEO</button>
+    <button class="tb-btn" id="engageBtnTop" onclick="toggleEngage()">▶ ENGAGE</button>
+  </div>
+</div>
+
+<!-- VIDEO VOICE EXTRACTOR MODAL -->
+<div id="videoModalOverlay" style="display:none;position:fixed;inset:0;z-index:999;background:rgba(7,5,15,.88);backdrop-filter:blur(6px);align-items:flex-start;justify-content:center;overflow-y:auto;padding:40px 16px">
+  <div id="videoModal" style="width:100%;max-width:640px;background:linear-gradient(145deg,rgba(22,15,46,.97),rgba(15,11,30,.99));border:1px solid var(--glass-border, rgba(255,255,255,.1));border-radius:6px;box-shadow:0 30px 80px rgba(0,0,0,.7),0 0 60px rgba(168,85,247,.08);overflow:hidden;font-family:'Share Tech Mono',monospace;color:#e6e6fa">
+
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid rgba(255,255,255,.08);background:rgba(0,0,0,.25)">
+      <div>
+        <div style="font-size:9px;letter-spacing:.3em;color:#a855f7;opacity:.8">VIDEO VOICE EXTRACTOR</div>
+        <div style="font-size:15px;font-weight:700;font-family:'Orbitron',sans-serif;color:#fff;margin-top:2px">ELIMINATE NOISE · AMPLIFY VOICE</div>
+      </div>
+      <button onclick="closeVideoModal()" style="width:28px;height:28px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.04);color:#c084fc;cursor:pointer;font-size:14px;border-radius:3px">✕</button>
+    </div>
+
+    <div style="padding:18px">
+      <div style="font-size:9px;letter-spacing:.15em;color:#9090b8;margin-bottom:10px;line-height:1.6">
+        UPLOAD ANY VIDEO (UP TO 2GB). WE EXTRACT THE AUDIO, AUTO-DETECT THE NOISE FLOOR, GATE OUT EVERYTHING THAT ISN'T HUMAN VOICE, AMPLIFY WHAT REMAINS, AND REMUX IT BACK INTO YOUR VIDEO — FULLY IN-BROWSER, NOTHING UPLOADED TO ANY SERVER.
+      </div>
+
+      <div id="vidDropzone" style="border:1.5px dashed rgba(168,85,247,.35);background:rgba(168,85,247,.04);border-radius:4px;padding:24px;text-align:center;margin-bottom:14px;cursor:pointer;transition:all .2s" onclick="document.getElementById('vidFile').click()">
+        <input type="file" id="vidFile" accept="video/*" style="display:none" onchange="onVidFileSelected(this)"/>
+        <div style="font-size:24px;margin-bottom:8px">🎬</div>
+        <div id="vidFileLabel" style="font-size:10px;letter-spacing:.12em;color:#c9b8f0">DROP VIDEO OR TAP TO BROWSE</div>
+        <div style="font-size:8px;letter-spacing:.1em;color:#6a5a8a;margin-top:6px">MP4 · MOV · WEBM · MKV — UP TO 2GB</div>
+      </div>
+
+      <div id="vidInfo" style="display:none;margin-bottom:14px;display:flex;gap:6px;flex-wrap:wrap">
+        <div style="padding:4px 10px;border:1px solid rgba(168,85,247,.25);background:rgba(168,85,247,.06);font-size:8px;letter-spacing:.1em;border-radius:3px"><span style="color:#9090b8">FILE </span><span style="color:#fff" id="vidName">--</span></div>
+        <div style="padding:4px 10px;border:1px solid rgba(168,85,247,.25);background:rgba(168,85,247,.06);font-size:8px;letter-spacing:.1em;border-radius:3px"><span style="color:#9090b8">SIZE </span><span style="color:#c084fc" id="vidSize">--</span></div>
+        <div style="padding:4px 10px;border:1px solid rgba(168,85,247,.25);background:rgba(168,85,247,.06);font-size:8px;letter-spacing:.1em;border-radius:3px"><span style="color:#9090b8">DURATION </span><span style="color:#c084fc" id="vidDur">--</span></div>
+      </div>
+
+      <!-- Strength / Sensitivity sliders -->
+      <div id="vidParamRow" style="display:none;margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:8px;letter-spacing:.15em;color:#9090b8">NOISE SUPPRESSION</span><span style="font-size:9px;color:#c084fc" id="vidStrV">65%</span></div>
+        <input type="range" id="vidStr" min="0.3" max="0.99" step="0.01" value="0.65" oninput="vidStrength=parseFloat(this.value);document.getElementById('vidStrV').textContent=Math.round(this.value*100)+'%'" style="width:100%;height:3px;margin-bottom:10px"/>
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:8px;letter-spacing:.15em;color:#9090b8">VOICE BOOST</span><span style="font-size:9px;color:#c084fc" id="vidBoostV">5.0×</span></div>
+        <input type="range" id="vidBoost" min="1" max="10" step="0.1" value="5.0" oninput="vidBoost=parseFloat(this.value);document.getElementById('vidBoostV').textContent=parseFloat(this.value).toFixed(1)+'×'" style="width:100%;height:3px"/>
+      </div>
+
+      <button id="vidProcessBtn" onclick="processVideo()" disabled
+        style="width:100%;padding:13px;font-size:10px;letter-spacing:.25em;font-weight:700;font-family:'Orbitron',sans-serif;
+        border:1px solid rgba(168,85,247,.4);background:linear-gradient(135deg,rgba(168,85,247,.15),rgba(232,121,249,.08));
+        color:#fff;cursor:not-allowed;opacity:.4;border-radius:4px;margin-bottom:12px;transition:all .2s">
+        ▶ EXTRACT &amp; AMPLIFY VOICE
+      </button>
+
+      <div id="vidProgWrap" style="display:none;margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;margin-bottom:5px">
+          <span style="font-size:8px;letter-spacing:.15em;color:#c9b8f0" id="vidStageTxt">// IDLE</span>
+          <span style="font-size:9px;color:#c084fc" id="vidPct">0%</span>
+        </div>
+        <div style="height:7px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);overflow:hidden;border-radius:4px">
+          <div id="vidProgBar" style="height:100%;width:0%;background:linear-gradient(90deg,#a855f7,#e879f9);box-shadow:0 0 10px rgba(168,85,247,.6);transition:width .3s"></div>
+        </div>
+        <div style="font-size:7px;color:#6a5a8a;letter-spacing:.08em;margin-top:5px;max-height:40px;overflow-y:auto" id="vidLog"></div>
+      </div>
+
+      <div id="vidErr" style="display:none;margin-bottom:10px;padding:9px 12px;border:1px solid rgba(244,114,182,.3);background:rgba(244,114,182,.06);font-size:9px;color:#f472b6;letter-spacing:.08em;border-radius:3px"></div>
+
+      <div id="vidResult" style="display:none">
+        <div style="font-size:9px;letter-spacing:.15em;color:#a78bfa;margin-bottom:8px">✓ VOICE ISOLATED &amp; AMPLIFIED</div>
+        <video id="vidPreview" controls style="width:100%;background:#000;border-radius:4px;margin-bottom:10px;max-height:280px"></video>
+        <a id="vidDownload" download="amplify_processed.mp4" style="display:block;text-decoration:none">
+          <button style="width:100%;padding:11px;font-size:9px;letter-spacing:.2em;border:1px solid rgba(168,85,247,.4);background:rgba(168,85,247,.1);color:#fff;cursor:pointer;border-radius:4px;font-family:'Share Tech Mono',monospace">↓ DOWNLOAD PROCESSED VIDEO</button>
+        </a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- HEADER -->
+<div class="header">
+  <div class="tagline">SENTINEL AUDIO // MIDNIGHT GALAXY // v4.0</div>
+  <h1>AMPLIFY</h1>
+  <div class="sub">HUMAN VOICE ISOLATION ENGINE</div>
+</div>
+
+<!-- MAIN PANEL -->
+<div class="panel">
+  <div class="statusbar">
+    <div class="status-left">
+      <div class="pulse-ring" id="pulseRing"><div class="ring"></div></div>
+      <span class="status-label" id="statusLabel">STANDBY</span>
+    </div>
+    <span class="nf-display">NF <span id="nfVal">—</span></span>
+    <span class="voice-lock" id="voiceLock">▸ SCANNING</span>
+  </div>
+
+  <div class="error-banner" id="errBanner" style="display:none"></div>
+  <div class="ultra-badge" id="ultraBadge">⚡ ULTRA — 1dB → 33dB // PRE-GAIN ×45 → EXPANDER → LIMITER</div>
+
+  <div class="scope-wrap">
+    <div class="scope-label">WAVEFORM</div>
+    <div class="scope"><canvas id="scopeCanvas"></canvas></div>
+  </div>
+
+  <div class="viz">
+    <div class="spectrum-wrap">
+      <div class="spec-label">FREQUENCY SPECTRUM</div>
+      <div class="spectrum" id="spectrum"></div>
+    </div>
+    <div class="vu-wrap">
+      <div class="vu-col">
+        <div class="vu-label">IN</div>
+        <div class="vu-meter"><div class="vu-fill" id="vuIn" style="height:0%"></div>
+          <div class="vu-mark" style="bottom:80%"></div><div class="vu-mark" style="bottom:50%"></div><div class="vu-mark" style="bottom:20%"></div>
+        </div>
+        <div class="vu-val" id="vuInVal">0</div>
+      </div>
+      <div class="vu-col">
+        <div class="vu-label">OUT</div>
+        <div class="vu-meter"><div class="vu-fill" id="vuOut" style="height:0%"></div>
+          <div class="vu-mark" style="bottom:80%"></div><div class="vu-mark" style="bottom:50%"></div><div class="vu-mark" style="bottom:20%"></div>
+        </div>
+        <div class="vu-val" id="vuOutVal">0</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="classifier">
+    <div class="cls-header">SOURCE CLASSIFIER <span id="clsFrameCount">WARMUP</span></div>
+    <div class="cls-grid">
+      <div class="cls-cell"><div class="cls-cell-label">PITCH VARIANCE</div><div class="cls-bar-wrap"><div class="cls-bar" id="cPitch" style="background:var(--lavender)"></div></div><div class="cls-val" id="cPitchVal">—</div></div>
+      <div class="cls-cell"><div class="cls-cell-label">SPECTRAL FLUX</div><div class="cls-bar-wrap"><div class="cls-bar" id="cFlat" style="background:var(--indigo)"></div></div><div class="cls-val" id="cFlatVal">—</div></div>
+      <div class="cls-cell"><div class="cls-cell-label">FORMANT ENERGY</div><div class="cls-bar-wrap"><div class="cls-bar" id="cForm" style="background:var(--pink)"></div></div><div class="cls-val" id="cFormVal">—</div></div>
+      <div class="cls-cell"><div class="cls-cell-label">SILENCE BURSTS</div><div class="cls-bar-wrap"><div class="cls-bar" id="cZcr" style="background:var(--lavender)"></div></div><div class="cls-val" id="cZcrVal">—</div></div>
+      <div class="cls-cell"><div class="cls-cell-label">DYNAMICS</div><div class="cls-bar-wrap"><div class="cls-bar" id="cDyn" style="background:var(--indigo)"></div></div><div class="cls-val" id="cDynVal">—</div></div>
+      <div class="cls-cell"><div class="cls-cell-label">CONFIDENCE</div><div class="cls-bar-wrap"><div class="cls-bar" id="cConf" style="background:var(--steel-hi)"></div></div><div class="cls-val" id="cConfVal">—</div></div>
+    </div>
+    <div class="cls-verdict" id="clsVerdict">AWAITING SIGNAL</div>
+  </div>
+
+  <div class="src-switch">
+    <button class="src-switch-btn active-auto" id="srcHuman" onclick="setSourceMode('human')">
+      <span class="src-switch-label">LOCK TO</span>◈ HUMAN VOICE
+    </button>
+    <button class="src-switch-btn active-auto" id="srcAuto" onclick="setSourceMode('auto')">
+      <span class="src-switch-label">MODE</span>⟳ AUTO DETECT
+    </button>
+    <button class="src-switch-btn active-auto" id="srcMedia" onclick="setSourceMode('media')">
+      <span class="src-switch-label">LOCK TO</span>◈ MEDIA / TV
+    </button>
+  </div>
+  <div class="src-mode-desc" id="srcModeDesc">AUTO — classifier determines source type in real time</div>
+
+  <div class="mute-strip">
+    <button class="mute-btn" id="muteHumanBtn" onclick="toggleMute('human')">
+      <span class="mute-icon">🎙</span><span id="muteHumanLabel">MUTE HUMAN</span>
+    </button>
+    <button class="mute-btn" id="muteMediaBtn" onclick="toggleMute('media')">
+      <span class="mute-icon">📺</span><span id="muteMediaLabel">MUTE MEDIA</span>
+    </button>
+  </div>
+
+  <!-- NOISE SUPPRESSION -->
+  <div class="ns-panel">
+    <div class="ns-header">
+      FAN / AC / BLOWER ELIMINATION
+      <span class="ns-badge" id="nsBadge">NOISE: IDLE</span>
+    </div>
+
+    <!-- Detected sources -->
+    <div class="ns-targets">
+      <div class="ns-target" id="tgtFan"><span class="tgt-dot"></span>FAN</div>
+      <div class="ns-target" id="tgtAC"><span class="tgt-dot"></span>A/C</div>
+      <div class="ns-target" id="tgtBlower"><span class="tgt-dot"></span>BLOWER</div>
+      <div class="ns-target" id="tgtHVAC"><span class="tgt-dot"></span>HVAC</div>
+    </div>
+
+    <!-- Controls -->
+    <div class="ns-controls">
+      <button class="ns-btn" id="nsBtn" onclick="toggleNoiseSuppression()">◎ SUPPRESS</button>
+      <button class="ns-cal-btn" id="nsCalBtn" onclick="startNoiseCalibration()">⊕ CALIBRATE</button>
+      <button class="ns-reset-btn" onclick="resetNoiseProfile()">↺</button>
+    </div>
+
+    <!-- Aggressiveness slider -->
+    <div class="ns-slider-row">
+      <span class="ns-slider-label">STRENGTH</span>
+      <input type="range" id="nsAlpha" min="1.0" max="4.0" step="0.1" value="2.0"
+        oninput="setNoiseAlpha(this.value);updatePct(this)"
+        style="flex:1"/>
+      <span class="ns-slider-val" id="nsAlphaVal">2.0×</span>
+    </div>
+    <div class="ns-slider-row">
+      <span class="ns-slider-label">FLOOR</span>
+      <input type="range" id="nsFloor" min="0.001" max="0.05" step="0.001" value="0.001"
+        oninput="noiseFloor=parseFloat(this.value);document.getElementById('nsFloorVal').textContent=parseFloat(this.value).toFixed(3);updatePct(this)"
+        style="flex:1"/>
+      <span class="ns-slider-val" id="nsFloorVal">0.001</span>
+    </div>
+
+    <div class="ns-instructions">
+      <b>1.</b> ENGAGE mic &nbsp;→&nbsp; <b>2.</b> Run only fan/AC &nbsp;→&nbsp; <b>3.</b> Hit CALIBRATE (0.7s) &nbsp;→&nbsp; <b>4.</b> Speak — noise eliminated
+    </div>
+  </div>
+
+  <!-- NOISE SUPPRESSION PANEL -->
+  <div class="noise-panel">
+    <div class="noise-header">
+      <span class="noise-title">FAN / AC / BLOWER SUPPRESSION</span>
+      <span class="noise-status off" id="noiseStatus">OFF</span>
+    </div>
+    <div class="fan-badge" id="fanBadge">
+      <span class="fan-icon">🌀</span>
+      <span class="fan-label" id="fanLabel">NO FAN DETECTED</span>
+      <div class="fan-score-bar"><div class="fan-score-fill" id="fanScoreFill"></div></div>
+    </div>
+    <div class="noise-controls">
+      <button class="noise-btn" id="nsBtnToggle" onclick="nsToggle()">◈ ENABLE</button>
+      <button class="noise-btn calibrate-btn" id="nsBtnCal" onclick="nsCalibrate()" style="display:none">⟳ CALIBRATE</button>
+      <button class="noise-btn" id="nsBtnAuto" onclick="nsAutoCalibrate()">⚡ AUTO-CAL</button>
+    </div>
+    <div class="noise-strength">
+      <span class="noise-strength-label">STRENGTH</span>
+      <input type="range" id="nsStrength" min="1" max="4" step="0.1" value="2"
+        style="flex:1" oninput="nsSetStrength(this.value)"/>
+      <span class="noise-strength-val" id="nsStrengthVal">2.0×</span>
+    </div>
+    <div class="suppress-meter"><div class="suppress-fill" id="suppressFill"></div></div>
+  </div>
+
+  <div class="chain" id="chainDisplay">
+    <div class="chain-node" id="cn0">PRE-EMPH</div><div class="chain-arrow">→</div>
+    <div class="chain-node" id="cn1">HP</div><div class="chain-arrow">→</div>
+    <div class="chain-node" id="cn2">MUD CUT</div><div class="chain-arrow">→</div>
+    <div class="chain-node" id="cn3">PRESENCE ×2</div><div class="chain-arrow">→</div>
+    <div class="chain-node" id="cn4">AIR +3dB</div><div class="chain-arrow">→</div>
+    <div class="chain-node" id="cn5">COMP</div><div class="chain-arrow">→</div>
+    <div class="chain-node" id="cn6">OUT</div>
+  </div>
+
+  <div class="presets">
+    <div class="preset-label">PRESETS</div>
+    <div class="preset-buttons" id="presetBtns"></div>
+  </div>
+  <div class="controls" id="controls"></div>
+
+  <div class="engage-wrap">
+    <button class="engage-btn off" id="engageBtn" onclick="toggleEngage()">ENGAGE</button>
+  </div>
+</div>
+
+<!-- CC PANEL -->
+<div class="cc-wrap" id="ccWrap" style="display:none">
+  <div class="cc-bar">
+    <span class="cc-label">CC // LIVE TRANSCRIPTION</span>
+    <div class="cc-controls">
+      <select class="cc-lang" id="ccLang" onchange="ccSetLang(this.value)">
+        <option value="en-US">EN</option><option value="es-ES">ES</option>
+        <option value="fr-FR">FR</option><option value="de-DE">DE</option>
+        <option value="pt-BR">PT</option><option value="zh-CN">ZH</option>
+        <option value="ja-JP">JA</option><option value="ar-SA">AR</option>
+      </select>
+      <button class="cc-copy" onclick="ccCopy()">COPY</button>
+      <button class="cc-clear" onclick="ccClear()">CLR</button>
+    </div>
+  </div>
+  <div class="cc-box" id="ccBox">
+    <div class="cc-status" id="ccStatus">IDLE</div>
+    <div class="cc-live" id="ccLive"></div>
+    <div class="cc-history" id="ccHistory"></div>
+  </div>
+</div>
+
+<div class="footer">HP → PRESENCE EQ → LP → COMPANDER → GAIN // CLASSIFIER // CC // WEB AUDIO API v4.0</div>
+
+<script>
+
+
+// ═══════════════════════════════════════════════════════════════
+// PRESETS — tuned for human speech formant bands
+// ═══════════════════════════════════════════════════════════════
+const PRESETS = {
+  // Low Voice: deep gate + strong presence — clearest output for quiet talkers
+  "Low Voice":  { voiceBoost:8,  threshold:-62, lowCut:80,  highCut:4500, presenceGain:8,  presenceFreq:3000 },
+  // Whisper: extreme gain + presence — catches barely audible speech
+  "Whisper":    { voiceBoost:14, threshold:-78, lowCut:150, highCut:3500, presenceGain:10, presenceFreq:2800 },
+  // Across Room: wide EQ, heavy comp — for far-field voice capture
+  "Across Room":{ voiceBoost:12, threshold:-70, lowCut:100, highCut:5000, presenceGain:9,  presenceFreq:3200 },
+  // Conference: balanced, multiple speakers at normal talking volume
+  "Conference": { voiceBoost:5,  threshold:-45, lowCut:200, highCut:6000, presenceGain:5,  presenceFreq:3000 },
+  // Studio: minimal, transparent — close mic, loud source
+  "Studio":     { voiceBoost:2,  threshold:-28, lowCut:80,  highCut:8000, presenceGain:2,  presenceFreq:4000 },
+}
+const SLIDERS = [
+  { key:"voiceBoost",   label:"OUTPUT GAIN",    min:1,   max:20,    step:0.5,  fmt:v=>`×${v.toFixed(1)}` },
+  { key:"threshold",    label:"GATE THRESHOLD", min:-90, max:-10,   step:1,    fmt:v=>`${v}dB` },
+  { key:"lowCut",       label:"LOW CUT",        min:60,  max:500,   step:10,   fmt:v=>`${v}Hz` },
+  { key:"highCut",      label:"HIGH CUT",       min:1000,max:12000, step:100,  fmt:v=>v>=1000?`${(v/1000).toFixed(1)}kHz`:`${v}Hz` },
+  { key:"presenceGain", label:"PRESENCE",       min:0,   max:15,    step:0.5,  fmt:v=>`+${v}dB` },
+  { key:"presenceFreq", label:"PRES FREQ",      min:800, max:5000,  step:100,  fmt:v=>v>=1000?`${(v/1000).toFixed(1)}kHz`:`${v}Hz` },
+]
+// ═══════════════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════════════════
+let active=false, overlayMode=false, ultraMode=false;
+let sourceMode='auto'; // 'auto' | 'human' | 'media'
+// ── Fan/AC noise suppression ──
+let noiseNode=null;          // ScriptProcessorNode
+let noiseProfile=null;       // Float32Array — learned noise spectrum
+let noiseCalibrating=false;  // capturing noise floor
+let noiseCalibFrames=[];     // accumulate calibration frames
+let noiseSuppressOn=false;   // active suppression toggle
+let noiseAlpha=2.0;          // over-subtraction factor (1.5–3.0)
+let noiseFloor=0.001;        // spectral floor (prevents musical noise)
+let muteHuman=false, muteMedia=false;
+let muteGain=null; // dedicated gain node driven by classifier
+let ctx=null, stream=null;
+let gain=null, hp=null, lp=null, comp=null, presence=null;
+let upComp=null, limiter=null, preGain=null;
+let inAn=null, outAn=null, timeAn=null, raf=null;
+let nf=-60, params={...PRESETS["Low Voice"]}, preset="Low Voice";
+
+// Classifier state v2
+let frameCount = 0;
+// Rolling buffers (60 frames @ ~60fps = ~1 second of history)
+let prevFreqData = null;
+let rmsHistory = [];        // for AMR
+let fluxHistory = [];       // spectral flux
+let silenceRuns = 0;        // consecutive silent frames
+let silenceBursts = [];     // burst lengths
+let sibHistory = [];        // sibilance variance
+let clsSmooth = {human:0.5, media:0.5}; // smoothed output
+
+// ═══════════════════════════════════════════════════════════════
+// OVERLAY TOGGLE
+// ═══════════════════════════════════════════════════════════════
+function toggleOverlay(){
+  overlayMode=!overlayMode;
+  document.body.classList.toggle('overlay-mode', overlayMode);
+  const btn=document.getElementById('overlayBtn');
+  btn.className='tb-btn'+(overlayMode?' active-amber':'');
+  btn.textContent=overlayMode?'⊠ VISIBLE':'⊞ OVERLAY';
+}
+
+// ═══════════════════════════════════════════════════════════════
+// BUILD SPECTRUM
+// ═══════════════════════════════════════════════════════════════
+const spec=document.getElementById('spectrum');
+const bars=[];
+for(let i=0;i<32;i++){
+  const b=document.createElement('div');
+  b.className='bar';
+  b.style.cssText='flex:1;min-height:1px;height:0%';
+  spec.appendChild(b); bars.push(b);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// BUILD PRESETS
+// ═══════════════════════════════════════════════════════════════
+const pbWrap=document.getElementById('presetBtns');
+Object.keys(PRESETS).forEach(name=>{
+  const btn=document.createElement('button');
+  btn.className='preset-btn'+(name===preset?' active':'');
+  btn.textContent=name.toUpperCase();
+  btn.onclick=()=>applyPreset(name);
+  pbWrap.appendChild(btn);
+});
+
+// ═══════════════════════════════════════════════════════════════
+// BUILD SLIDERS
+// ═══════════════════════════════════════════════════════════════
+const ctrls=document.getElementById('controls');
+SLIDERS.forEach(({key,label,min,max,step,fmt})=>{
+  const div=document.createElement('div');
+  div.className='ctrl';
+  div.innerHTML=`
+    <div class="ctrl-header">
+      <span class="ctrl-name">${label}</span>
+      <span class="ctrl-val" id="val_${key}">${fmt(params[key])}</span>
+    </div>
+    <input type="range" id="sl_${key}" min="${min}" max="${max}" step="${step}" value="${params[key]}"/>
+  `;
+  ctrls.appendChild(div);
+  div.querySelector('input').addEventListener('input',e=>{
+    const v=parseFloat(e.target.value);
+    params[key]=v;
+    document.getElementById(`val_${key}`).textContent=fmt(v);
+    updatePct(e.target);
+    applyParamsToGraph();
+    updateChainDisplay();
+  });
+  updatePct(div.querySelector('input'));
+});
+
+function updatePct(el){
+  const pct=((el.value-el.min)/(el.max-el.min))*100;
+  el.style.background=`linear-gradient(to right,#00ff9d ${pct}%,#1a1a1a ${pct}%)`;
+}
+
+function applyParamsToGraph(){
+  if(comp){
+    comp.threshold.value = params.threshold;
+    comp.knee.value      = 20;
+    comp.ratio.value     = 12;
+    comp.attack.value    = 0.002;
+    comp.release.value   = 0.15;
+  }
+  if(gain)    gain.gain.value = params.voiceBoost;
+  if(hp)      hp.frequency.value = params.lowCut;
+  if(lp)      lp.frequency.value = params.highCut;
+  if(presence){
+    presence.gain.value      = params.presenceGain * 0.6;
+    presence.frequency.value = 1800;
+  }
+  if(limiter) limiter.threshold.value = -1.5;
+  const eq = window._eq;
+  if(eq){
+    eq.presence2.gain.value      = params.presenceGain * 0.8;
+    eq.presence2.frequency.value = params.presenceFreq;
+  }
+}
+function updateChainDisplay(){
+  document.getElementById('cn1').textContent=`HP ${params.lowCut}Hz`;
+  document.getElementById('cn2').textContent=`LP ${params.highCut>=1000?(params.highCut/1000).toFixed(1)+'kHz':params.highCut+'Hz'}`;
+  document.getElementById('cn3').textContent=`PRESENCE +${params.presenceGain}dB`;
+  document.getElementById('cn5').textContent=`GAIN ×${params.voiceBoost.toFixed(1)}`;
+  ['cn0','cn1','cn2','cn3','cn4','cn5','cn6'].forEach(id=>{
+    document.getElementById(id).className='chain-node'+(active?' hot':'');
+  });
+}
+
+function applyPreset(name){
+  preset=name;
+  params={...PRESETS[name]};
+  document.querySelectorAll('.preset-btn').forEach((b,i)=>{
+    b.className='preset-btn'+(Object.keys(PRESETS)[i]===name?' active':'');
+  });
+  SLIDERS.forEach(({key,fmt})=>{
+    const sl=document.getElementById(`sl_${key}`);
+    if(!sl) return;
+    const vl=document.getElementById(`val_${key}`);
+    sl.value=params[key]; vl.textContent=fmt(params[key]); updatePct(sl);
+  });
+  applyParamsToGraph();
+  updateChainDisplay();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// HUMAN vs MEDIA CLASSIFIER
+// Metrics (all derived from FFT + time-domain, no ML model):
+//
+// 1. PITCH VARIANCE — humans have quasi-periodic F0 micro-variation
+//    TV/radio has heavily compressed/limited pitch range
+// 2. SPECTRAL FLATNESS — broadcast is spectrally flat (noise-like);
+//    speech has strong harmonic peaks → low flatness (< 0.15)
+// 3. FORMANT ENERGY — speech energy concentrates in F1(300-900Hz)
+//    and F2(900-2500Hz) bands
+// 4. ZCR — voiced speech has low ZCR; fricatives moderate;
+//    music has variable ZCR depending on content
+// 5. DYNAMIC RANGE — live speech has higher short-term dynamics
+//    vs heavily limited broadcast audio
+// ═══════════════════════════════════════════════════════════════
+function classifySource(freqData, timeData, sampleRate){
+  const N = freqData.length;
+  const binHz = sampleRate / (N * 2);
+
+  // ════════════════════════════════════════════════════════
+  // FEATURE 1: RMS envelope
+  // ════════════════════════════════════════════════════════
+  let rmsSum = 0;
+  for(let i=0;i<timeData.length;i++){
+    const s=(timeData[i]-128)/128; rmsSum+=s*s;
+  }
+  const rms = Math.sqrt(rmsSum/timeData.length);
+  rmsHistory.push(rms);
+  if(rmsHistory.length>240) rmsHistory.shift();
+  const rmsMean = rmsHistory.reduce((a,b)=>a+b,0)/rmsHistory.length;
+  const rmsVar  = variance(rmsHistory);
+
+  // ════════════════════════════════════════════════════════
+  // FEATURE 2: SPECTRAL FLUX (frame-to-frame change)
+  // ════════════════════════════════════════════════════════
+  let flux=0;
+  if(prevFreqData){
+    for(let i=0;i<N;i++){
+      const d=(freqData[i]-prevFreqData[i])/255; flux+=d*d;
+    }
+    flux=Math.sqrt(flux/N);
+  }
+  prevFreqData=new Uint8Array(freqData);
+  fluxHistory.push(flux);
+  if(fluxHistory.length>90) fluxHistory.shift();
+  const fluxVar=variance(fluxHistory);
+
+  // ════════════════════════════════════════════════════════
+  // FEATURE 3: PROXIMITY EFFECT — THE KEY DISCRIMINATOR
+  // A live voice close to the mic has strong low-mid (100–300Hz) energy
+  // relative to upper-mids (1–3kHz). TV audio pumped through speakers
+  // at room distance has the OPPOSITE: the room absorbs lows, highs carry.
+  // Ratio: lowMidEnergy / voiceBandEnergy
+  // Live: ratio > 0.35    TV: ratio < 0.22
+  // ════════════════════════════════════════════════════════
+  let prox_lo=0, prox_hi=0;
+  for(let i=0;i<N;i++){
+    const hz=i*binHz, v=(freqData[i]/255)**2;
+    if(hz>=100 && hz<320)  prox_lo+=v;   // proximity band
+    if(hz>=900 && hz<3200) prox_hi+=v;   // presence band
+  }
+  const proxRatio = prox_lo / (prox_hi + prox_lo + 1e-9);
+  // Live speaker: proxRatio ~0.35-0.60 (strong body/warmth near mic)
+  // TV across room: proxRatio ~0.10-0.22 (room attenuates lows)
+
+  // ════════════════════════════════════════════════════════
+  // FEATURE 4: BROADCAST COMPRESSION FINGERPRINT
+  // TV/radio audio is brick-wall limited — the dynamic range is very narrow
+  // (typically <6dB). Live voice in real room has 15-25dB dynamic range.
+  // Measure: peak-to-valley ratio of RMS in last 2 seconds (120 frames)
+  // ════════════════════════════════════════════════════════
+  let dynRange=0;
+  if(rmsHistory.length >= 60){
+    const recent = rmsHistory.slice(-120).filter(v=>v>0.01);
+    if(recent.length > 10){
+      const peak = Math.max(...recent);
+      const floor = recent.reduce((a,b)=>a+b,0)/recent.length * 0.3;
+      dynRange = floor > 0 ? 20*Math.log10(peak/(floor+1e-9)) : 0;
+    }
+  }
+  // Live: dynRange > 12dB    TV compressed: dynRange < 6dB
+
+  // ════════════════════════════════════════════════════════
+  // FEATURE 5: SUB-BASS RATIO
+  // TV speakers + room = boosted sub-bass from standing waves
+  // Live voice at mic = minimal sub-bass
+  // ════════════════════════════════════════════════════════
+  let subBass=0, voiceBand=0;
+  for(let i=0;i<N;i++){
+    const hz=i*binHz, v=(freqData[i]/255)**2;
+    if(hz<100) subBass+=v;
+    else if(hz<3500) voiceBand+=v;
+  }
+  const subRatio=subBass/(voiceBand+subBass+1e-9);
+
+  // ════════════════════════════════════════════════════════
+  // FEATURE 6: SILENCE BURST PATTERN
+  // Human speech: natural pauses 150–900ms between words
+  // TV: nearly continuous signal with AGC filling gaps
+  // ════════════════════════════════════════════════════════
+  const isSilent=rms<0.03;
+  if(isSilent){ silenceRuns++; }
+  else{
+    if(silenceRuns>4 && silenceRuns<90){
+      silenceBursts.push(silenceRuns);
+      if(silenceBursts.length>20) silenceBursts.shift();
+    }
+    silenceRuns=0;
+  }
+  const burstScore=silenceBursts.length>3 ? Math.min(1,silenceBursts.length/12) : 0;
+
+  // ════════════════════════════════════════════════════════
+  // FEATURE 7: ROOM REVERB TAIL DETECTION
+  // Live close voice: very short or no reverb tail (direct sound dominates)
+  // TV in room: long reverb tail as TV speaker sound bounces off walls
+  // Proxy: measure how quickly RMS drops after a loud frame
+  // ════════════════════════════════════════════════════════
+  let reverbScore=0;
+  if(rmsHistory.length>12){
+    const recent12=rmsHistory.slice(-12);
+    const peak12=Math.max(...recent12);
+    const last3=recent12.slice(-3).reduce((a,b)=>a+b,0)/3;
+    if(peak12>0.04){
+      const tailRatio=last3/(peak12+1e-9);
+      // Long tail (TV in room): tailRatio > 0.7
+      // Short tail (live voice): tailRatio < 0.35
+      reverbScore=tailRatio; // high = reverby = media
+    }
+  }
+
+  // ════════════════════════════════════════════════════════
+  // FEATURE 8: SPECTRAL FLATNESS (WIENER ENTROPY)
+  // TV/broadcast: highly processed, spectrally flat in voice band
+  // Live voice: peaky spectrum with clear formant structure
+  // Compute geometric/arithmetic mean ratio in 300-4000Hz
+  // ════════════════════════════════════════════════════════
+  let geoSum=0, arith=0, cnt=0;
+  for(let i=0;i<N;i++){
+    const hz=i*binHz;
+    if(hz<300||hz>4000) continue;
+    const v=Math.max(0.001, freqData[i]/255);
+    geoSum+=Math.log(v); arith+=v; cnt++;
+  }
+  const sfm = cnt>0 ? Math.exp(geoSum/cnt)/(arith/cnt+1e-9) : 0.5;
+  // sfm near 1 = flat (broadcast); sfm near 0 = peaky (live voice formants)
+
+  // ════════════════════════════════════════════════════════
+  // FEATURE 9: SIBILANCE VARIANCE
+  // Natural S/SH sounds from live voice: bursty, highly variable
+  // TV de-essed audio: smoother sibilance
+  // ════════════════════════════════════════════════════════
+  let sibE=0;
+  for(let i=0;i<N;i++){
+    const hz=i*binHz;
+    if(hz>=4500&&hz<=8500) sibE+=(freqData[i]/255)**2;
+  }
+  sibHistory.push(sibE);
+  if(sibHistory.length>30) sibHistory.shift();
+  const sibVar=variance(sibHistory);
+
+  // ════════════════════════════════════════════════════════
+  // SCORING ENGINE
+  // Each feature votes for HUMAN or MEDIA with calibrated weights
+  // ════════════════════════════════════════════════════════
+  let humanScore=0, mediaScore=0;
+
+  // 1. PROXIMITY EFFECT (weight: 32 — strongest discriminator)
+  // proxRatio > 0.32 = live close voice
+  // proxRatio < 0.20 = TV across room
+  if(proxRatio > 0.30){
+    humanScore += Math.min(1,(proxRatio-0.20)/0.20) * 32;
+  } else if(proxRatio < 0.20){
+    mediaScore += Math.min(1,(0.20-proxRatio)/0.15) * 32;
+  }
+
+  // 2. DYNAMIC RANGE (weight: 28)
+  // Live: > 10dB   TV compressed: < 6dB
+  if(dynRange > 9){
+    humanScore += Math.min(1,(dynRange-9)/10) * 28;
+  } else if(dynRange < 7 && dynRange > 0){
+    mediaScore += Math.min(1,(7-dynRange)/5) * 28;
+  }
+
+  // 3. REVERB TAIL (weight: 22)
+  // Long tail = TV room reverb
+  if(reverbScore > 0.65){
+    mediaScore += Math.min(1,(reverbScore-0.5)/0.4) * 22;
+  } else if(reverbScore < 0.35 && rms > 0.03){
+    humanScore += (1 - reverbScore/0.35) * 22;
+  }
+
+  // 4. SPECTRAL FLATNESS (weight: 18)
+  // sfm near 0 = peaky = live voice formants
+  // sfm near 0.8 = flat = processed broadcast
+  if(sfm < 0.35){
+    humanScore += (1-sfm/0.35) * 18;
+  } else if(sfm > 0.65){
+    mediaScore += Math.min(1,(sfm-0.55)/0.35) * 18;
+  }
+
+  // 5. SUB-BASS (weight: 14)
+  if(subRatio > 0.25) mediaScore += Math.min(1,(subRatio-0.15)/0.2)*14;
+  if(subRatio < 0.15) humanScore += (1-subRatio/0.15)*8;
+
+  // 6. SILENCE BURSTS (weight: 20)
+  // Natural pauses = human. Only score if signal exists.
+  if(rmsHistory.length > 60){
+    humanScore += burstScore * 20;
+    mediaScore += Math.max(0, 0.5 - burstScore) * 10;
+  }
+
+  // 7. SPECTRAL FLUX VARIANCE (weight: 14)
+  const fluxVarScore=Math.min(1,fluxVar*1200);
+  humanScore += fluxVarScore * 14;
+  mediaScore += (1-fluxVarScore) * 8;
+
+  // 8. SIBILANCE VARIANCE (weight: 10)
+  const sibScore=Math.min(1,sibVar*600);
+  humanScore += sibScore * 10;
+  mediaScore += (1-sibScore) * 6;
+
+  // 9. RMS VARIANCE (weight: 10)
+  const rmsVarScore=Math.min(1,rmsVar*200);
+  humanScore += rmsVarScore * 10;
+  mediaScore += Math.max(0,1-rmsVarScore*2)*6;
+
+  // 10. BASELINE HUMAN PRIOR (weight: 8)
+  // Direct mic input biased toward human — environmental noise usually
+  // doesn't contain the proximity + dynamic pattern of TV
+  humanScore += 8;
+
+  // ── TEMPORAL SMOOTHING ──
+  const total=humanScore+mediaScore+1e-9;
+  const humanRaw=humanScore/total;
+
+  // Asymmetric: fast to HUMAN (0.22), very slow to MEDIA (0.055)
+  // Prevents TV cross-talk from flipping classifier momentarily
+  const alphaToHuman=0.22;
+  const alphaToMedia=0.055;
+  if(humanRaw > clsSmooth.human){
+    clsSmooth.human=clsSmooth.human*(1-alphaToHuman)+humanRaw*alphaToHuman;
+  } else {
+    clsSmooth.human=clsSmooth.human*(1-alphaToMedia)+humanRaw*alphaToMedia;
+  }
+  clsSmooth.media=1-clsSmooth.human;
+
+  // ── VERDICT ──
+  const confidence=Math.abs(clsSmooth.human-clsSmooth.media);
+  let verdict='MIXED';
+  if(frameCount<360){
+    // 6-second warmup: only flip to MEDIA if overwhelming
+    verdict=clsSmooth.media>0.82?'MEDIA':'HUMAN';
+  } else {
+    // MEDIA needs >68% confidence sustained. HUMAN needs only >52%.
+    // This asymmetry means we amplify human even in doubt.
+    if(clsSmooth.media>clsSmooth.human && clsSmooth.media>0.68){
+      verdict='MEDIA';
+    } else {
+      verdict='HUMAN';
+    }
+  }
+
+  return {
+    sfm:         Math.min(1,sfm),
+    formantRatio:Math.min(1,fluxVarScore),
+    pitchVar:    Math.min(1,proxRatio*2),
+    zcrNorm:     Math.min(1,burstScore),
+    dynVar:      Math.min(1,rmsVarScore),
+    humanPct:    clsSmooth.human,
+    mediaPct:    clsSmooth.media,
+    confidence,
+    verdict,
+    _prox:  proxRatio.toFixed(3),
+    _dyn:   dynRange.toFixed(1)+'dB',
+    _rev:   reverbScore.toFixed(3),
+    _sfm:   sfm.toFixed(3),
+    _sub:   subRatio.toFixed(3),
+  };
+}
+
+
+function variance(arr){
+  if(arr.length<2) return 0;
+  const mean = arr.reduce((a,b)=>a+b,0)/arr.length;
+  return arr.reduce((a,b)=>a+(b-mean)**2,0)/arr.length;
+}
+
+function updateClassifierUI(cls){
+  // Manual lock — don't override user's choice
+  if(sourceMode !== 'auto') return;
+
+  const pct = v => Math.round(v*100);
+  document.getElementById('cPitch').style.width = pct(cls.pitchVar)+'%';
+  document.getElementById('cPitchVal').textContent = pct(cls.pitchVar)+'%';
+  document.getElementById('cFlat').style.width = pct(1-cls.sfm)+'%';
+  document.getElementById('cFlatVal').textContent = pct(1-cls.sfm)+'%';
+  document.getElementById('cForm').style.width = pct(cls.formantRatio)+'%';
+  document.getElementById('cFormVal').textContent = pct(cls.formantRatio)+'%';
+  document.getElementById('cZcr').style.width = pct(1-cls.zcrNorm)+'%';
+  document.getElementById('cZcrVal').textContent = pct(1-cls.zcrNorm)+'%';
+  document.getElementById('cDyn').style.width = pct(cls.dynVar)+'%';
+  document.getElementById('cDynVal').textContent = pct(cls.dynVar)+'%';
+  document.getElementById('cConf').style.width = pct(cls.confidence)+'%';
+  document.getElementById('cConfVal').textContent = pct(cls.confidence)+'%';
+
+  const v = document.getElementById('clsVerdict');
+  const badge = document.getElementById('srcBadge');
+
+  if(cls.verdict==='HUMAN'){
+    v.textContent='▸ HUMAN VOICE DETECTED';
+    v.className='cls-verdict v-human';
+    badge.className='human';
+    const _bh=document.getElementById('srcBadgeText');if(_bh)_bh.textContent='HUMAN VOICE';
+    updatePulseRing('active');
+    document.getElementById('voiceLock').textContent='▸ VOICE LOCKED';
+    document.getElementById('voiceLock').className='voice-lock locked';
+  } else if(cls.verdict==='MEDIA'){
+    v.textContent='▸ MEDIA / BROADCAST DETECTED';
+    v.className='cls-verdict v-media';
+    badge.className='media';
+    const _bm=document.getElementById('srcBadgeText');if(_bm)_bm.textContent='MEDIA / TV';
+    updatePulseRing('scanning');
+    document.getElementById('voiceLock').textContent='▸ MEDIA SIGNAL';
+    document.getElementById('voiceLock').className='voice-lock';
+  } else {
+    v.textContent='▸ MIXED / AMBIGUOUS SOURCE';
+    v.className='cls-verdict v-mixed';
+    badge.className='silence';
+    const _bx=document.getElementById('srcBadgeText');if(_bx)_bx.textContent='MIXED';
+    updatePulseRing('scanning');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// VU HELPERS
+// ═══════════════════════════════════════════════════════════════
+function vuColor(l){ return l>.8?'#f472b6':l>.5?'#fbbf24':'#c084fc'; }
+
+// ═══════════════════════════════════════════════════════════════
+// TICK — main render loop
+// ═══════════════════════════════════════════════════════════════
+function tick(){
+  if(!inAn||!outAn) return;
+
+  const inData  = new Uint8Array(inAn.frequencyBinCount);
+  const outData = new Uint8Array(outAn.frequencyBinCount);
+  const timeData= new Uint8Array(timeAn.fftSize);
+  inAn.getByteFrequencyData(inData);
+  outAn.getByteFrequencyData(outData);
+  timeAn.getByteTimeDomainData(timeData);
+
+  const inAvg  = inData.reduce((a,b)=>a+b,0)/inData.length/255;
+  const outAvg = outData.reduce((a,b)=>a+b,0)/outData.length/255;
+  const db = inAvg>0 ? 20*Math.log10(Math.max(inAvg,0.0001)) : -80;
+  nf = nf*.97 + db*.03;
+
+  // ── VU Meters ──
+  const inL  = Math.min(1, inAvg*3);
+  const outL = Math.min(1, outAvg*3);
+  const inC  = vuColor(inL);
+  const outC = vuColor(outL);
+  document.getElementById('vuIn').style.cssText  = `height:${inL*100}%;background:linear-gradient(to top,${inC},${inC}88);box-shadow:${inL>.05?`0 0 8px ${inC}44`:'none'}`;
+  document.getElementById('vuOut').style.cssText = `height:${outL*100}%;background:linear-gradient(to top,${outC},${outC}88);box-shadow:${outL>.05?`0 0 8px ${outC}44`:'none'}`;
+  document.getElementById('vuInVal').textContent  = Math.round(inL*100);
+  document.getElementById('vuOutVal').textContent = Math.round(outL*100);
+  document.getElementById('nfVal').textContent    = `${Math.round(nf)}dB`;
+
+  // ── Classifier (every 4th frame for performance) ──
+  frameCount++;
+  if(frameCount % 4 === 0 && inAvg > 0.005){
+    const sampleRate = ctx ? ctx.sampleRate : 44100;
+    const cls = classifySource(inData, timeData, sampleRate);
+    updateClassifierUI(cls);
+    applyMuteGain(cls.verdict);
+    detectMechanicalNoise(inData, sampleRate);
+  } else if(inAvg <= 0.005){
+    document.getElementById('srcBadge').className='silence';
+    document.getElementById('srcBadge').textContent='◈ SILENCE';
+    document.getElementById('clsVerdict').textContent='AWAITING SIGNAL';
+    document.getElementById('clsVerdict').className='cls-verdict';
+  }
+
+  // ── Spectrum Bars ──
+  const step = Math.max(1, Math.floor(inData.length/32));
+  bars.forEach((b,i)=>{
+    const v = inData[Math.min(i*step, inData.length-1)]||0;
+    const pct = (v/255)*100;
+    b.style.height = pct+'%';
+    b.style.background = `linear-gradient(to top,rgba(168,85,247,${.15+(v/255)*.8}),rgba(192,132,252,${.05+(v/255)*.4}))`;
+    b.style.boxShadow = v>80?`0 0 4px rgba(192,132,252,${(v/255)*.5})`:'none';
+  });
+  drawScope();
+  const _ce=document.getElementById('clsFrameCount');
+  if(_ce){if(frameCount<480){_ce.textContent='WARMUP '+Math.round((frameCount/480)*100)+'%';_ce.style.color='#fbbf24';}else{_ce.textContent='LIVE';_ce.style.color='#c084fc';}}
+  // Fan score display
+  if(typeof nsFanScore !== 'undefined'){
+    const fb = document.getElementById('fanBadge');
+    const fl = document.getElementById('fanLabel');
+    const fs = document.getElementById('fanScoreFill');
+    const sf = document.getElementById('suppressFill');
+    if(fb&&fl&&fs){
+      const pct = Math.round(nsFanScore*100);
+      fs.style.width = pct+'%';
+      if(nsFanScore > 0.45){
+        fb.className = 'fan-badge detected';
+        fl.textContent = nsFanScore > 0.7 ? '⚠ FAN / AC DETECTED' : 'POSSIBLE FAN NOISE';
+      } else {
+        fb.className = 'fan-badge';
+        fl.textContent = nsFanScore > 0.25 ? 'LOW BACKGROUND NOISE' : 'NO FAN DETECTED';
+      }
+    }
+    if(sf && noiseSuppressOn && typeof nsOutSmooth !== 'undefined'){
+      sf.style.width = Math.round((1-nsOutSmooth)*100)+'%';
+    }
+  }
+  raf = requestAnimationFrame(tick);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ENGAGE / DISENGAGE
+// ═══════════════════════════════════════════════════════════════
+function applyUltraChain(){
+  if(!comp || !gain || !limiter) return;
+  if(ultraMode){
+    comp.threshold.value = -80;
+    comp.knee.value      = 10;
+    comp.ratio.value     = 20;
+    comp.attack.value    = 0.002;
+    comp.release.value   = 0.1;
+    gain.gain.value      = 20;
+    limiter.threshold.value = -0.5;
+    // ULTRA: boost presence + air even more for extreme clarity
+    if(window._eq){
+      window._eq.airShelf.gain.value    = 6;  // +6dB air
+      window._eq.presence2.gain.value  = params.presenceGain * 1.2;
+    }
+  } else {
+    comp.threshold.value = params.threshold;
+    comp.knee.value      = 20;
+    comp.ratio.value     = 12;
+    comp.attack.value    = 0.002;
+    comp.release.value   = 0.15;
+    gain.gain.value      = params.voiceBoost;
+    limiter.threshold.value = -1.5;
+    if(window._eq){
+      window._eq.airShelf.gain.value   = 3;
+      window._eq.presence2.gain.value = params.presenceGain * 0.8;
+    }
+  }
+}
+function toggleUltra(){
+  ultraMode = !ultraMode;
+  const btn = document.getElementById('ultraBtn');
+  const badge = document.getElementById('ultraBadge');
+  btn.className = 'tb-btn' + (ultraMode ? ' active-ultra' : '');
+  btn.textContent = ultraMode ? '⚡ ULTRA ON' : '⚡ ULTRA';
+  badge.className = 'ultra-badge' + (ultraMode ? ' on' : '');
+  // Update chain display
+  document.getElementById('cn5').textContent = ultraMode
+    ? 'ULTRA ×45'
+    : `GAIN ×${params.voiceBoost.toFixed(1)}`;
+  applyUltraChain();
+}
+
+
+function updatePulseRing(state){
+  const r = document.getElementById('pulseRing');
+  if(!r) return;
+  r.className = 'pulse-ring' + (state==='active' ? ' active' : state==='scanning' ? ' scanning' : '');
+}
+
+async function toggleEngage(){
+  if(active){ stopAll(); return; }
+  setError(null);
+  setStatus('CONNECTING…', false);
+
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:false }
+    });
+    ctx = new (window.AudioContext||window.webkitAudioContext)({ sampleRate:44100 });
+    const source = ctx.createMediaStreamSource(stream);
+
+    // ═══════════════════════════════════════════════════════
+    // DSP ENGINE v6 — CLARITY REBUILD
+    // Chain: noiseNode → HP → notch(hum) → lowShelf → midScoop →
+    //        presence1 → presence2 → airShelf → deEss → LP →
+    //        comp → gain → limiter
+    //
+    // CLARITY PRINCIPLES:
+    // 1. Cut mud (200-500Hz boxiness) before boosting highs
+    // 2. Two presence bands: body(1-2.5kHz) + clarity(3-5kHz)
+    // 3. Air shelf (+10kHz) restores "openness" lost in LP filter
+    // 4. De-esser: frequency-specific compressor on 6-9kHz sibilants
+    // 5. Attack 2ms: catches consonant transients (p,t,k,s,f)
+    // 6. Comp knee 20dB: transparent, no pumping
+    // ═══════════════════════════════════════════════════════
+
+    // Input analysers
+    inAn = ctx.createAnalyser();
+    inAn.fftSize = 256;
+    inAn.smoothingTimeConstant = 0.8;
+    timeAn = ctx.createAnalyser();
+    timeAn.fftSize = 256;
+    timeAn.smoothingTimeConstant = 0;
+
+    // ── 1. HIGH-PASS @ lowCut Hz ──
+    // Removes rumble, handling noise, mic proximity effect
+    // Q=0.7: Butterworth — maximally flat, no resonance peak
+    hp = ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = params.lowCut;
+    hp.Q.value = 0.7;
+
+    // ── 2. HUM NOTCH (50/60Hz electrical interference) ──
+    const humNotch = ctx.createBiquadFilter();
+    humNotch.type = 'notch';
+    humNotch.frequency.value = 60; // 60Hz US power hum (50Hz EU)
+    humNotch.Q.value = 30;         // very narrow — only kills the tone
+
+    // ── 3. LOW-MID SHELF CUT (mud reduction) ──
+    // 200-500Hz "boxiness" makes voices sound like talking into a can
+    // Cut -4dB here and everything above sounds clearer without touching it
+    const lowShelf = ctx.createBiquadFilter();
+    lowShelf.type = 'lowshelf';
+    lowShelf.frequency.value = 350;
+    lowShelf.gain.value = -4;  // subtle cut — removes mud, keeps warmth
+
+    // ── 4. MID SCOOP (removes honkiness) ──
+    // 600-900Hz "nasal/honky" resonance — present in most room mics
+    // Cutting here makes voice sound more natural and present
+    const midScoop = ctx.createBiquadFilter();
+    midScoop.type = 'peaking';
+    midScoop.frequency.value = 700;
+    midScoop.Q.value = 1.5;
+    midScoop.gain.value = -3;  // gentle dip, removes congestion
+
+    // ── 5. PRESENCE BAND 1 — vowel clarity (1-2.5kHz) ──
+    // Boosts vowel fundamentals — makes voice "forward" and intelligible
+    // This is the "punch" of a voice — cuts through background
+    presence = ctx.createBiquadFilter();
+    presence.type = 'peaking';
+    presence.frequency.value = 1800;
+    presence.Q.value = 0.9;
+    presence.gain.value = params.presenceGain * 0.6; // 60% of total presence here
+
+    // ── 6. PRESENCE BAND 2 — consonant clarity (3-5kHz) ──
+    // Consonants live here: s, t, k, p, f — these define intelligibility
+    // If voice is muddy/unclear, THIS is the band to boost
+    const presence2 = ctx.createBiquadFilter();
+    presence2.type = 'peaking';
+    presence2.frequency.value = params.presenceFreq; // 2500-4000Hz
+    presence2.Q.value = 1.0;
+    presence2.gain.value = params.presenceGain * 0.8; // 80% of total here
+
+    // ── 7. AIR SHELF (8-12kHz openness) ──
+    // High-frequency "air" makes voice sound open, airy, not boxed-in
+    // Small boost: restores openness that LP filter and room absorb
+    const airShelf = ctx.createBiquadFilter();
+    airShelf.type = 'highshelf';
+    airShelf.frequency.value = 8000;
+    airShelf.gain.value = 3;  // gentle lift — "airy" not "hissy"
+
+    // ── 8. DE-ESSER (tames harsh sibilants) ──
+    // At high gain, S/SH sounds become painfully sharp (6-9kHz)
+    // De-essing: compress ONLY this band, leave rest untouched
+    // Implemented as a gentle lowshelf on the very top
+    const deEss = ctx.createBiquadFilter();
+    deEss.type = 'peaking';
+    deEss.frequency.value = 7500;
+    deEss.Q.value = 2.0;
+    deEss.gain.value = -4;  // tame harshness before it hits comp
+
+    // ── 9. LOW-PASS @ highCut Hz ──
+    lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = params.highCut;
+    lp.Q.value = 0.7;
+
+    // ── 10. COMPRESSOR ──
+    // Wide knee (20dB) = completely transparent — listener never hears it working
+    // Attack 2ms: catches consonant transients for crisp intelligibility
+    // Release 150ms: natural — longer than a syllable, shorter than a word
+    comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = params.threshold;
+    comp.knee.value      = 20;    // transparent — no pumping artifacts
+    comp.ratio.value     = 12;    // strong leveling: quiet≈loud
+    comp.attack.value    = 0.002; // 2ms — consonants intact
+    comp.release.value   = 0.15;  // 150ms — natural continuity
+
+    // ── 11. OUTPUT GAIN ──
+    gain = ctx.createGain();
+    gain.gain.value = params.voiceBoost;
+
+    // ── 12. LIMITER ──
+    limiter = ctx.createDynamicsCompressor();
+    limiter.threshold.value = -1.5;
+    limiter.knee.value      = 0;
+    limiter.ratio.value     = 20;
+    limiter.attack.value    = 0.001;
+    limiter.release.value   = 0.05;
+
+    // ── 13. MUTE GATE ──
+    muteGain = ctx.createGain();
+    muteGain.gain.value = 1.0;
+
+    // ── 14. OUTPUT ANALYSER ──
+    outAn = ctx.createAnalyser();
+    outAn.fftSize = 256;
+    outAn.smoothingTimeConstant = 0.8;
+
+    // ── NOISE SUPPRESSION NODE ──
+    const NS_BANDS = 32, NS_BUF = 512, NS_CAL_FRAMES = 50;
+    noiseNode = ctx.createScriptProcessor(NS_BUF, 1, 1);
+    let nsProfile=new Float32Array(NS_BANDS), nsCalFrames=[];
+    let nsGainSmooth=new Float32Array(NS_BANDS).fill(1.0), nsOutSmooth=1.0;
+    let nsFlatHist=[], nsCrestHist=[], nsSilHist=[], nsFanSc=0;
+    noiseNode.onaudioprocess = function(e){
+      const inp=e.inputBuffer.getChannelData(0), out=e.outputBuffer.getChannelData(0);
+      const chunk=Math.floor(NS_BUF/NS_BANDS), bandE=new Float32Array(NS_BANDS);
+      let total=0, peak=0;
+      for(let b=0;b<NS_BANDS;b++){
+        let s=0, st=b*chunk;
+        for(let i=st;i<st+chunk&&i<NS_BUF;i++){s+=inp[i]*inp[i];const a=Math.abs(inp[i]);if(a>peak)peak=a;}
+        bandE[b]=Math.sqrt(s/chunk); total+=bandE[b];
+      }
+      const rms=Math.sqrt(inp.reduce((a,v)=>a+v*v,0)/NS_BUF);
+      const mean=total/NS_BANDS; let gs=0,vb=0;
+      for(let b=0;b<NS_BANDS;b++) if(bandE[b]>1e-8){gs+=Math.log(bandE[b]);vb++;}
+      const sfm=vb>0?Math.exp(gs/vb)/(mean+1e-9):0;
+      const crest=rms>1e-6?peak/rms:0, hasSig=rms>0.003;
+      nsFlatHist.push(sfm); if(nsFlatHist.length>60)nsFlatHist.shift();
+      nsCrestHist.push(crest); if(nsCrestHist.length>60)nsCrestHist.shift();
+      nsSilHist.push(hasSig?1:0); if(nsSilHist.length>60)nsSilHist.shift();
+      const af=nsFlatHist.reduce((a,b)=>a+b,0)/nsFlatHist.length;
+      const ac=nsCrestHist.reduce((a,b)=>a+b,0)/nsCrestHist.length;
+      const cr=nsSilHist.reduce((a,b)=>a+b,0)/nsSilHist.length;
+      nsFanSc=nsFanSc*0.92+((Math.min(1,af*2.5)*0.5+(ac<4?1-ac/4:0)*0.3+Math.max(0,cr-0.7)/0.3*0.2))*0.08;
+      window._nsFanScore=nsFanSc;
+      if(noiseCalibrating&&hasSig){
+        nsCalFrames.push(new Float32Array(bandE));
+        if(nsCalFrames.length>=NS_CAL_FRAMES){
+          nsProfile.fill(0);
+          for(const f of nsCalFrames) for(let b=0;b<NS_BANDS;b++) nsProfile[b]+=f[b];
+          for(let b=0;b<NS_BANDS;b++) nsProfile[b]=(nsProfile[b]/nsCalFrames.length)*noiseAlpha;
+          nsCalFrames=[]; noiseCalibrating=false; noiseSuppressOn=true; updateNoiseUI('ready');
+        }
+      }
+      if(!noiseSuppressOn||!hasSig){out.set(inp);nsOutSmooth=nsOutSmooth*0.95+0.05;return;}
+      let fg=0;
+      for(let b=0;b<NS_BANDS;b++){
+        const g=bandE[b]>1e-8?Math.max(noiseFloor,1-nsProfile[b]/bandE[b]):noiseFloor;
+        nsGainSmooth[b]=nsGainSmooth[b]*0.85+Math.pow(g,1.2+nsFanSc*0.8)*0.15;
+        fg+=nsGainSmooth[b];
+      }
+      nsOutSmooth=nsOutSmooth*0.9+(fg/NS_BANDS)*0.1;
+      window._nsOutSmooth=nsOutSmooth;
+      for(let i=0;i<NS_BUF;i++) out[i]=inp[i]*nsOutSmooth;
+    };
+
+    // ══════════════════════════════════════════════════════
+    // WIRE GRAPH v6
+    // source → noise → HP → humNotch → lowShelf → midScoop →
+    //          presence → presence2 → airShelf → deEss → LP →
+    //          comp → gain → limiter → muteGain → outAn → out
+    // ══════════════════════════════════════════════════════
+    source.connect(inAn);
+    source.connect(timeAn);
+    source.connect(noiseNode);
+    noiseNode.connect(hp);
+    hp.connect(humNotch);
+    humNotch.connect(lowShelf);
+    lowShelf.connect(midScoop);
+    midScoop.connect(presence);
+    presence.connect(presence2);
+    presence2.connect(airShelf);
+    airShelf.connect(deEss);
+    deEss.connect(lp);
+    lp.connect(comp);
+    comp.connect(gain);
+    gain.connect(limiter);
+    limiter.connect(muteGain);
+    muteGain.connect(outAn);
+    outAn.connect(ctx.destination);
+
+    // Store new nodes for applyParamsToGraph access
+    window._eq = { humNotch, lowShelf, midScoop, presence2, airShelf, deEss };
+
+    // Legacy refs (for applyUltraChain compat)
+    preGain = { gain: { value: 1 } }; // dummy — no longer in chain
+    upComp  = { gain: { value: 1 } }; // dummy
+    if(ultraMode) applyUltraChain();
+
+    raf = requestAnimationFrame(tick);
+    active = true;
+    setStatus('ACTIVE', true);
+    updateChainDisplay();
+
+    const _eb=document.getElementById('engageBtn');
+    if(_eb){_eb.textContent='DISENGAGE';_eb.className='engage-btn on';}
+    const _et=document.getElementById('engageBtnTop');
+    if(_et){_et.textContent='■ STOP';_et.className='tb-btn active-red';}
+    updatePulseRing('active');
+
+  } catch(e){
+    setError(e.message||'Microphone access denied');
+    setStatus('ERROR', false);
+  }
+}
+
+function stopAll(){
+  cancelAnimationFrame(raf);
+  try{ ctx&&ctx.close(); }catch(_){}
+  stream&&stream.getTracks().forEach(t=>t.stop());
+  ctx=null; stream=null; inAn=null; outAn=null; timeAn=null;
+  gain=null; hp=null; lp=null; comp=null; presence=null; upComp=null; limiter=null; preGain=null; muteGain=null;
+  muteHuman=false; muteMedia=false;
+  resetMuteBtns();
+  active=false;
+  rmsHistory=[]; fluxHistory=[]; silenceBursts=[]; sibHistory=[]; silenceRuns=0; frameCount=0; prevFreqData=null; clsSmooth={human:0.5,media:0.5};
+  noiseNode=null; noiseProfile=null; noiseCalibrating=false; noiseCalibFrames=[]; noiseSuppressOn=false;
+  updateNoiseUI('idle');
+
+  setStatus('STANDBY', false);
+  bars.forEach(b=>{ b.style.height='0%'; });
+  document.getElementById('vuIn').style.height='0%';
+  document.getElementById('vuOut').style.height='0%';
+  document.getElementById('voiceLock').textContent='▸ SCANNING';
+  document.getElementById('voiceLock').className='voice-lock';
+  updatePulseRing('');
+  document.getElementById('srcBadge').className='silence';
+  document.getElementById('srcBadge').textContent='◈ AWAITING SIGNAL';
+  document.getElementById('clsVerdict').textContent='AWAITING SIGNAL';
+  document.getElementById('clsVerdict').className='cls-verdict';
+  ['cn0','cn1','cn2','cn3','cn4','cn5','cn6'].forEach(id=>{
+    const el=document.getElementById(id); if(el) el.className='chain-node';
+  });
+
+  const _sb=document.getElementById('engageBtn');
+  if(_sb){_sb.textContent='ENGAGE';_sb.className='engage-btn off';}
+  const _st=document.getElementById('engageBtnTop');
+  if(_st){_st.textContent='▶ ENGAGE';_st.className='tb-btn';}
+  updatePulseRing('');
+  if(typeof scopeCtx!=='undefined'&&scopeCtx&&scopeCanvas)scopeCtx.clearRect(0,0,scopeCanvas.width,scopeCanvas.height);
+}
+
+function setStatus(s, on){
+  document.getElementById('statusLabel').textContent=s;
+  document.getElementById('statusLabel').className='status-label'+(on?' on':'');
+}
+function setError(msg){
+  const b=document.getElementById('errBanner');
+  if(msg){ b.textContent='⚠ '+msg; b.style.display='block'; }
+  else b.style.display='none';
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MECHANICAL NOISE DETECTOR
+// Analyzes FFT for signatures of fans, AC, blowers, HVAC:
+// - Strong low-freq energy (20–120Hz) = blade pass fundamental
+// - Harmonic series at regular spacing
+// - Stationary spectrum (low flux) = continuous mechanical source
+// - High sub-band energy relative to speech band
+// ═══════════════════════════════════════════════════════════════
+let mechDetectHistory = {fan:[], ac:[], blower:[], hvac:[]};
+
+function detectMechanicalNoise(freqData, sampleRate){
+  const N=freqData.length, binHz=sampleRate/(N*2);
+
+  // Energy in bands (normalized)
+  let e20_60=0, e60_120=0, e120_300=0, e300_3k=0, eTotal=0;
+  for(let i=0;i<N;i++){
+    const hz=i*binHz, v=(freqData[i]/255)**2;
+    eTotal+=v;
+    if(hz>=20  && hz<60)   e20_60+=v;
+    if(hz>=60  && hz<120)  e60_120+=v;
+    if(hz>=120 && hz<300)  e120_300+=v;
+    if(hz>=300 && hz<3000) e300_3k+=v;
+  }
+  if(eTotal<0.001) return; // silence
+
+  // Normalize
+  const r20  = e20_60  / (eTotal+1e-9);
+  const r60  = e60_120 / (eTotal+1e-9);
+  const r120 = e120_300/ (eTotal+1e-9);
+  const rSp  = e300_3k / (eTotal+1e-9);
+
+  // Harmonic detection — look for periodic peaks
+  function countHarmonics(fundamental, data, binH){
+    let count=0, maxHarm=Math.floor(sampleRate/2/fundamental);
+    for(let h=1;h<=Math.min(maxHarm,8);h++){
+      const bin=Math.round(h*fundamental/binH);
+      if(bin<data.length && data[bin]>40) count++;
+    }
+    return count;
+  }
+
+  // PC/desk fan: 20–50Hz fundamental, 3-7 blades, ~600–2000RPM
+  const fanHarmonics = Math.max(
+    countHarmonics(25, freqData, binHz),
+    countHarmonics(35, freqData, binHz),
+    countHarmonics(45, freqData, binHz)
+  );
+  const fanScore = (r20*3 + (fanHarmonics/6)*0.4 + (1-rSp)*0.3);
+
+  // AC unit: 50–80Hz, stronger 60–120Hz band
+  const acHarmonics = Math.max(
+    countHarmonics(60, freqData, binHz),
+    countHarmonics(50, freqData, binHz)
+  );
+  const acScore = (r60*3 + r120*1.5 + (acHarmonics/6)*0.4 + (1-rSp)*0.2);
+
+  // HVAC blower: 30–80Hz, broad low rumble
+  const blowerScore = ((r20+r60+r120)*1.5 + (1-rSp)*0.5);
+
+  // HVAC system: 80–120Hz dominant, continuous
+  const hvacHarmonics = countHarmonics(80, freqData, binHz);
+  const hvacScore = (r60*2 + r120*2 + (hvacHarmonics/5)*0.5);
+
+  // Smooth scores
+  function pushSmooth(arr, val){ arr.push(val); if(arr.length>12) arr.shift(); return arr.reduce((a,b)=>a+b,0)/arr.length; }
+  const sFan    = pushSmooth(mechDetectHistory.fan, fanScore);
+  const sAC     = pushSmooth(mechDetectHistory.ac, acScore);
+  const sBlower = pushSmooth(mechDetectHistory.blower, blowerScore);
+  const sHVAC   = pushSmooth(mechDetectHistory.hvac, hvacScore);
+
+  // Update target badges
+  const thresh = 0.35;
+  function setTarget(id, detected){
+    const el=document.getElementById(id);
+    if(el) el.className='ns-target'+(detected?' detected':'');
+  }
+  setTarget('tgtFan',    sFan    > thresh);
+  setTarget('tgtAC',     sAC     > thresh);
+  setTarget('tgtBlower', sBlower > thresh);
+  setTarget('tgtHVAC',   sHVAC   > thresh);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// NOISE SUPPRESSION ENGINE
+// Fan / AC / Blower elimination via spectral subtraction
+// ═══════════════════════════════════════════════════════════════
+function startNoiseCalibration(){
+  if(!active){ setError('Engage first, then calibrate'); return; }
+  noiseCalibrating=true;
+  noiseSuppressOn=false;
+  noiseProfile=null;
+  noiseCalibFrames=[];
+  updateNoiseUI('calibrating');
+}
+
+function toggleNoiseSuppression(){
+  if(!noiseProfile){ startNoiseCalibration(); return; }
+  noiseSuppressOn=!noiseSuppressOn;
+  updateNoiseUI(noiseSuppressOn?'active':'paused');
+}
+
+function resetNoiseProfile(){
+  noiseProfile=null;
+  noiseSuppressOn=false;
+  noiseCalibrating=false;
+  noiseCalibFrames=[];
+  updateNoiseUI('idle');
+}
+
+function setNoiseAlpha(v){
+  noiseAlpha=parseFloat(v);
+  document.getElementById('nsAlphaVal').textContent=v+'×';
+}
+
+function updateNoiseUI(state){
+  const btn=document.getElementById('nsBtn');
+  const badge=document.getElementById('nsBadge');
+  const cal=document.getElementById('nsCalBtn');
+  if(!btn||!badge) return;
+  const states={
+    idle:      {btn:'◎ SUPPRESS',  btnCls:'ns-btn',              badge:'NOISE: IDLE',   badgeCls:'ns-badge'},
+    calibrating:{btn:'◉ LEARNING…',btnCls:'ns-btn calibrating',  badge:'CALIBRATING…',  badgeCls:'ns-badge calibrating'},
+    ready:     {btn:'◉ ACTIVE',    btnCls:'ns-btn active',       badge:'NOISE: ACTIVE', badgeCls:'ns-badge active'},
+    active:    {btn:'◉ ACTIVE',    btnCls:'ns-btn active',       badge:'NOISE: ACTIVE', badgeCls:'ns-badge active'},
+    paused:    {btn:'◎ PAUSED',    btnCls:'ns-btn paused',       badge:'NOISE: PAUSED', badgeCls:'ns-badge paused'},
+  };
+  const s=states[state]||states.idle;
+  btn.textContent=s.btn; btn.className=s.btnCls;
+  badge.textContent=s.badge; badge.className=s.badgeCls;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MUTE ENGINE
+// muteGain node sits at end of chain.
+// Classifier verdict drives it every tick when in AUTO mode.
+// Manual mute locks it regardless of classifier.
+// ═══════════════════════════════════════════════════════════════
+function toggleMute(src){
+  if(src === 'human'){
+    muteHuman = !muteHuman;
+    // Can't mute both — release media mute if both would be muted
+    if(muteHuman && muteMedia){ muteMedia=false; applyMuteBtnState('media', false); }
+    applyMuteBtnState('human', muteHuman);
+  } else {
+    muteMedia = !muteMedia;
+    if(muteMedia && muteHuman){ muteHuman=false; applyMuteBtnState('human', false); }
+    applyMuteBtnState('media', muteMedia);
+  }
+  applyMuteGain(null); // force immediate update with current verdict
+}
+
+function applyMuteBtnState(src, muted){
+  const btn   = document.getElementById('mute' + (src==='human'?'Human':'Media') + 'Btn');
+  const label = document.getElementById('mute' + (src==='human'?'Human':'Media') + 'Label');
+  if(muted){
+    btn.className   = 'mute-btn muted-' + src;
+    label.textContent = src==='human' ? '✕ MUTING HUMAN' : '✕ MUTING MEDIA';
+  } else {
+    btn.className   = 'mute-btn';
+    label.textContent = src==='human' ? 'MUTE HUMAN' : 'MUTE MEDIA';
+  }
+}
+
+function resetMuteBtns(){
+  applyMuteBtnState('human', false);
+  applyMuteBtnState('media', false);
+}
+
+// Called every tick with current classifier verdict ('HUMAN'|'MEDIA'|'MIXED'|null)
+// sourceMode OVERRIDES classifier — if user locked a mode, trust that
+let _lastVerdict = 'MIXED';
+function applyMuteGain(verdict){
+  if(verdict) _lastVerdict = verdict;
+  if(!muteGain) return;
+
+  // Resolve effective source: manual lock wins over classifier
+  let effectiveSource;
+  if(sourceMode === 'human')      effectiveSource = 'HUMAN';
+  else if(sourceMode === 'media') effectiveSource = 'MEDIA';
+  else                            effectiveSource = _lastVerdict; // AUTO
+
+  let targetGain = 1.0;
+  if(muteHuman && effectiveSource === 'HUMAN') targetGain = 0.0;
+  else if(muteMedia && effectiveSource === 'MEDIA') targetGain = 0.0;
+  else targetGain = 1.0;
+
+  muteGain.gain.cancelScheduledValues(muteGain.context.currentTime);
+  muteGain.gain.setTargetAtTime(targetGain, muteGain.context.currentTime, 0.02);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SOURCE MODE — manual override of classifier + DSP profile
+// human: tight band 200–3500Hz, heavy presence, fast gate
+// media: wide band 80–12000Hz, flat EQ, light compression
+// auto:  classifier drives everything
+// ═══════════════════════════════════════════════════════════════
+const SRC_PROFILES = {
+  human: {
+    lowCut: 200, highCut: 3500,
+    presenceGain: 6, presenceFreq: 2500,
+    threshold: -45, ratio: 14,
+    attack: 0.001, release: 0.06,
+    desc: 'HUMAN — narrow band 200–3500Hz, +6dB presence, fast gate for voice isolation',
+    badge: '◈ HUMAN VOICE', badgeClass: 'human',
+  },
+  media: {
+    lowCut: 80, highCut: 12000,
+    presenceGain: 1, presenceFreq: 4000,
+    threshold: -20, ratio: 4,
+    attack: 0.01, release: 0.15,
+    desc: 'MEDIA — wide band 80Hz–12kHz, flat EQ, light compression for TV/radio clarity',
+    badge: '◈ MEDIA / BROADCAST', badgeClass: 'media',
+  },
+  auto: {
+    desc: 'AUTO — classifier determines source type in real time',
+    badge: '◈ AWAITING SIGNAL', badgeClass: 'silence',
+  }
+};
+
+function setSourceMode(mode){
+  sourceMode = mode;
+  const btns = {
+    human: document.getElementById('srcHuman'),
+    auto:  document.getElementById('srcAuto'),
+    media: document.getElementById('srcMedia'),
+  };
+  // Reset all
+  Object.values(btns).forEach(b => b.className = 'src-switch-btn');
+  btns[mode].className = 'src-switch-btn active-' + mode;
+
+  const desc = document.getElementById('srcModeDesc');
+  desc.textContent = SRC_PROFILES[mode].desc;
+
+  // Apply DSP profile immediately if active
+  if(mode !== 'auto'){
+    const p = SRC_PROFILES[mode];
+    if(hp)       hp.frequency.value       = p.lowCut;
+    if(lp)       lp.frequency.value       = p.highCut;
+    if(presence){ presence.gain.value     = p.presenceGain;
+                  presence.frequency.value = p.presenceFreq; }
+    if(comp && !ultraMode){
+      comp.threshold.value = p.threshold;
+      comp.ratio.value     = p.ratio;
+      comp.attack.value    = p.attack;
+      comp.release.value   = p.release;
+    }
+    // Force badge
+    const badge = document.getElementById('srcBadge');
+    badge.textContent = p.badge;
+    badge.className   = p.badgeClass;
+    // Force verdict display
+    const verd = document.getElementById('clsVerdict');
+    verd.textContent = mode === 'human'
+      ? '▸ HUMAN VOICE [MANUAL LOCK]'
+      : '▸ MEDIA / BROADCAST [MANUAL LOCK]';
+    verd.className = 'cls-verdict v-' + mode;
+  } else {
+    // Restore params from sliders
+    applyParamsToGraph();
+  }
+  applyMuteGain(null); // re-evaluate gate with new sourceMode
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// NOISE SUPPRESSION CONTROL FUNCTIONS
+// ═══════════════════════════════════════════════════════════════
+function nsToggle(){
+  if(!active){ setError('Engage audio first'); return; }
+  noiseSuppressOn = !noiseSuppressOn;
+  const btn = document.getElementById('nsBtnToggle');
+  const calBtn = document.getElementById('nsBtnCal');
+  if(noiseSuppressOn){
+    btn.textContent = '◈ ENABLED'; btn.className = 'noise-btn active';
+    calBtn.style.display = 'block';
+    if(!noiseProfile) nsCalibrate();
+    else updateNoiseUI('active');
+  } else {
+    btn.textContent = '◈ ENABLE'; btn.className = 'noise-btn';
+    calBtn.style.display = 'none';
+    updateNoiseUI('off');
+  }
+}
+
+function nsCalibrate(){
+  if(!active){ setError('Engage audio first'); return; }
+  noiseProfile      = null;
+  noiseCalibrating  = true;
+  noiseSuppressOn   = false;
+  updateNoiseUI('calibrating');
+}
+
+function nsAutoCalibrate(){
+  // Auto-cal: engage if needed, then calibrate immediately
+  if(!active){
+    setError('Engage audio first, then auto-cal');
+    return;
+  }
+  nsCalibrate();
+}
+
+function nsSetStrength(v){
+  noiseAlpha = parseFloat(v);
+  document.getElementById('nsStrengthVal').textContent = parseFloat(v).toFixed(1) + '×';
+  // Recompute profile with new alpha if we have one
+  if(noiseProfile){
+    // Scale existing profile
+    const base = noiseAlpha;
+    document.getElementById('nsStrengthVal').textContent = base.toFixed(1) + '×';
+  }
+}
+
+
+
+// ═══════════════════════════════════════════════════════════════
+// CC ENGINE — Web Speech API (SpeechRecognition)
+// Continuous mode, interim results, auto-restart on end
+// Language switchable at runtime
+// ═══════════════════════════════════════════════════════════════
+let ccActive = false;
+let ccRec = null;
+let ccTranscript = [];  // confirmed lines
+let ccLangVal = 'en-US';
+let ccRestarting = false;
+
+const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+function toggleCC(){
+  if(!SpeechRec){
+    document.getElementById('ccWrap').style.display='block';
+    document.getElementById('ccBox').innerHTML =
+      '<div class="cc-no-support">⚠ SPEECH RECOGNITION NOT SUPPORTED IN THIS BROWSER<br><span style="font-size:9px;color:#252525">USE CHROME OR EDGE</span></div>';
+    return;
+  }
+  ccActive = !ccActive;
+  const btn = document.getElementById('ccBtn');
+  const wrap = document.getElementById('ccWrap');
+  if(ccActive){
+    btn.className = 'tb-btn on';
+    btn.textContent = '◉ CC ON';
+    wrap.style.display = 'block';
+    ccStart();
+  } else {
+    btn.className = 'tb-btn';
+    btn.textContent = '◉ CC';
+    ccStop();
+  }
+}
+
+function ccStart(){
+  if(!SpeechRec || !ccActive) return;
+  ccRec = new SpeechRec();
+  ccRec.continuous = true;
+  ccRec.interimResults = true;
+  ccRec.maxAlternatives = 1;
+  ccRec.lang = ccLangVal;
+
+  ccRec.onstart = () => {
+    ccRestarting = false;
+    setCC_Status('LISTENING', 'listening');
+  };
+
+  ccRec.onresult = (e) => {
+    let interim = '';
+    let final = '';
+    for(let i = e.resultIndex; i < e.results.length; i++){
+      const t = e.results[i][0].transcript;
+      if(e.results[i].isFinal){
+        final += t;
+      } else {
+        interim += t;
+      }
+    }
+    // Render interim (live)
+    const liveEl = document.getElementById('ccLive');
+    liveEl.textContent = interim;
+    liveEl.className = 'cc-live' + (interim ? ' active' : '');
+
+    // Commit final to history
+    if(final.trim()){
+      ccTranscript.push(final.trim());
+      if(ccTranscript.length > 80) ccTranscript.shift();
+      renderCCHistory();
+      liveEl.textContent = '';
+      liveEl.className = 'cc-live';
+    }
+  };
+
+  ccRec.onerror = (e) => {
+    if(e.error === 'no-speech') return; // normal, ignore
+    if(e.error === 'not-allowed'){
+      setCC_Status('DENIED', 'error');
+      ccActive = false;
+      document.getElementById('ccBtn').className = 'tb-btn';
+      document.getElementById('ccBtn').textContent = '◉ CC';
+      return;
+    }
+    setCC_Status('ERR:' + e.error.toUpperCase(), 'error');
+  };
+
+  ccRec.onend = () => {
+    // Auto-restart unless user toggled off
+    if(ccActive && !ccRestarting){
+      ccRestarting = true;
+      setTimeout(() => { if(ccActive) ccStart(); }, 180);
+    } else {
+      setCC_Status('IDLE', '');
+    }
+  };
+
+  try { ccRec.start(); } catch(_){}
+}
+
+function ccStop(){
+  ccRestarting = false;
+  try { ccRec && ccRec.stop(); } catch(_){}
+  ccRec = null;
+  setCC_Status('IDLE', '');
+  document.getElementById('ccLive').textContent = '';
+  document.getElementById('ccLive').className = 'cc-live';
+}
+
+function renderCCHistory(){
+  const el = document.getElementById('ccHistory');
+  el.innerHTML = ccTranscript
+    .map((t,i) => `<span${i===ccTranscript.length-1?' style="color:#888"':''}>${t}</span>`)
+    .join('');
+  // Auto-scroll to bottom
+  const box = document.getElementById('ccBox');
+  box.scrollTop = box.scrollHeight;
+}
+
+function setCC_Status(text, cls){
+  const el = document.getElementById('ccStatus');
+  el.textContent = text;
+  el.className = 'cc-status' + (cls ? ' '+cls : '');
+}
+
+function ccSetLang(lang){
+  ccLangVal = lang;
+  if(ccActive){
+    ccRestarting = true;
+    try { ccRec && ccRec.stop(); } catch(_){}
+    setTimeout(ccStart, 250);
+  }
+}
+
+function ccCopy(){
+  const all = ccTranscript.join(' ');
+  if(!all) return;
+  navigator.clipboard.writeText(all).then(()=>{
+    const btn = document.querySelector('.cc-copy');
+    btn.textContent = 'COPIED';
+    setTimeout(()=>{ btn.textContent = 'COPY'; }, 1200);
+  });
+}
+
+function ccClear(){
+  ccTranscript = [];
+  document.getElementById('ccHistory').innerHTML = '';
+  document.getElementById('ccLive').textContent = '';
+}
+
+
+
+// ── WAVEFORM SCOPE (new) ──
+const scopeCanvas = document.getElementById('scopeCanvas');
+const scopeCtx = scopeCanvas ? scopeCanvas.getContext('2d') : null;
+
+function drawScope(){
+  if(!scopeCtx || !timeAn) return;
+  const W = scopeCanvas.offsetWidth;
+  const H = scopeCanvas.offsetHeight;
+  if(scopeCanvas.width !== W) scopeCanvas.width = W;
+  if(scopeCanvas.height !== H) scopeCanvas.height = H;
+
+  const buf = new Uint8Array(timeAn.fftSize);
+  timeAn.getByteTimeDomainData(buf);
+
+  scopeCtx.clearRect(0,0,W,H);
+  scopeCtx.beginPath();
+  scopeCtx.strokeStyle = 'rgba(192,132,252,0.75)';
+  scopeCtx.lineWidth = 1.5;
+  scopeCtx.shadowColor = '#a855f7';
+  scopeCtx.shadowBlur = 6;
+
+  const sliceW = W / buf.length;
+  let x = 0;
+  for(let i=0;i<buf.length;i++){
+    const v = buf[i]/128;
+    const y = (v*H/2);
+    i===0 ? scopeCtx.moveTo(x,y) : scopeCtx.lineTo(x,y);
+    x += sliceW;
+  }
+  scopeCtx.stroke();
+}
+
+// ── Patch tick() to also draw scope and update frame count display ──
+const _origTick = tick;
+function tickEnhanced(){
+  drawScope();
+  // Update warmup counter in classifier header
+  const el = document.getElementById('clsFrameCount');
+  if(el){
+    if(frameCount < 480){
+      const pct = Math.round((frameCount/480)*100);
+      el.textContent = `WARMUP ${pct}%`;
+      el.style.color = 'var(--amber)';
+    } else {
+      el.textContent = 'LIVE';
+      el.style.color = 'var(--green)';
+    }
+  }
+}
+
+
+</script>
+
+<script>
+// ── SERVICE WORKER — PWA offline support ──
+// ═══════════════════════════════════════════════════════
+// VIDEO VOICE EXTRACTOR — ffmpeg.wasm + offline DSP render
+// ═══════════════════════════════════════════════════════
+let vidFFmpeg=null,vidFFmpegLoaded=false,vidSelectedFile=null;
+let vidStrength=0.65,vidBoost=5.0,vidProcessing=false;
+const VID_MAX_BYTES=2*1024*1024*1024; // 2GB
+
+function openVideoModal(){document.getElementById('videoModalOverlay').style.display='flex';}
+function closeVideoModal(){if(!vidProcessing)document.getElementById('videoModalOverlay').style.display='none';}
+
+function onVidFileSelected(input){
+  const f=input.files[0];
+  if(!f)return;
+  if(f.size>VID_MAX_BYTES){
+    vidSetErr(`File too large (${(f.size/1073741824).toFixed(2)}GB). Max 2GB.`);
+    return;
+  }
+  vidSetErr(null);
+  vidSelectedFile=f;
+  document.getElementById('vidFileLabel').textContent=f.name;
+  document.getElementById('vidInfo').style.display='flex';
+  document.getElementById('vidParamRow').style.display='block';
+  document.getElementById('vidName').textContent=f.name.length>22?f.name.slice(0,19)+'…':f.name;
+  document.getElementById('vidSize').textContent=fmtVidBytes(f.size);
+  document.getElementById('vidDur').textContent='--';
+  // Try to read duration via a temp video element
+  const tempUrl=URL.createObjectURL(f);
+  const tv=document.createElement('video');
+  tv.preload='metadata';
+  tv.onloadedmetadata=()=>{
+    const d=tv.duration;
+    document.getElementById('vidDur').textContent=isFinite(d)?fmtVidDur(d):'--';
+    URL.revokeObjectURL(tempUrl);
+  };
+  tv.src=tempUrl;
+  const btn=document.getElementById('vidProcessBtn');
+  btn.disabled=false;btn.style.opacity='1';btn.style.cursor='pointer';
+  document.getElementById('vidResult').style.display='none';
+}
+
+function fmtVidBytes(b){
+  if(b>1073741824)return(b/1073741824).toFixed(2)+'GB';
+  if(b>1048576)return(b/1048576).toFixed(1)+'MB';
+  return(b/1024).toFixed(0)+'KB';
+}
+function fmtVidDur(s){
+  const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=Math.floor(s%60);
+  return h>0?`${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`:`${m}:${String(sec).padStart(2,'0')}`;
+}
+
+function vidSetErr(m){
+  const e=document.getElementById('vidErr');
+  if(m){e.textContent='⚠ '+m;e.style.display='block';}else e.style.display='none';
+}
+function vidSetStage(txt,pct){
+  document.getElementById('vidProgWrap').style.display='block';
+  document.getElementById('vidStageTxt').textContent='// '+txt;
+  if(pct!==undefined){
+    document.getElementById('vidPct').textContent=Math.round(pct)+'%';
+    document.getElementById('vidProgBar').style.width=Math.round(pct)+'%';
+  }
+}
+function vidLog(msg){
+  const l=document.getElementById('vidLog');
+  l.textContent=msg;
+}
+
+function vidLoadScript(src){
+  return new Promise((res,rej)=>{
+    const s=document.createElement('script');
+    s.src=src;s.onload=res;s.onerror=()=>rej(new Error('Failed to load '+src));
+    document.head.appendChild(s);
+  });
+}
+
+async function loadVidFFmpeg(){
+  if(vidFFmpegLoaded) return;
+
+  // ── Show download progress with fetch + ReadableStream ──
+  async function fetchWithProgress(url, label, pctStart, pctEnd){
+    vidSetStage(label, pctStart);
+    try {
+      const resp = await fetch(url);
+      const total = parseInt(resp.headers.get('content-length') || '0');
+      const reader = resp.body.getReader();
+      const chunks = [];
+      let received = 0;
+      while(true){
+        const {done, value} = await reader.read();
+        if(done) break;
+        chunks.push(value);
+        received += value.length;
+        if(total > 0){
+          const pct = pctStart + (received/total)*(pctEnd-pctStart);
+          vidSetStage(label + ' (' + Math.round(received/1024) + 'KB / ' + Math.round(total/1024) + 'KB)', pct);
+        }
+      }
+      const blob = new Blob(chunks);
+      return URL.createObjectURL(blob);
+    } catch(e) {
+      // fallback: direct URL
+      return url;
+    }
+  }
+
+  vidSetStage('Loading FFmpeg engine (first time only, ~8MB)…', 2);
+  vidLog('Downloading processing engine...');
+
+  if(!window.FFmpegWASM){
+    vidSetStage('Loading ffmpeg.js…', 3);
+    await vidLoadScript('https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js');
+  }
+  if(!window.FFmpegUtil){
+    vidSetStage('Loading ffmpeg utils…', 6);
+    await vidLoadScript('https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js');
+  }
+
+  const {FFmpeg} = window.FFmpegWASM;
+  const {toBlobURL, fetchFile} = window.FFmpegUtil;
+  vidFFmpeg = new FFmpeg();
+
+  vidFFmpeg.on('log', ({message}) => { vidLog(message); });
+  vidFFmpeg.on('progress', ({progress, time}) => {
+    if(progress >= 0 && progress <= 1){
+      const pct = 50 + Math.round(progress * 35);
+      vidSetStage('Processing video… ' + Math.round(progress*100) + '%', pct);
+    }
+  });
+
+  const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+
+  // Fetch core JS with progress
+  const coreJsUrl  = await fetchWithProgress(baseURL+'/ffmpeg-core.js',  'Downloading engine core…', 8, 35);
+  const coreWasmUrl= await fetchWithProgress(baseURL+'/ffmpeg-core.wasm','Downloading WASM module…',35, 65);
+
+  vidSetStage('Initializing engine…', 66);
+  await vidFFmpeg.load({ coreURL: coreJsUrl, wasmURL: coreWasmUrl });
+
   vidFFmpegLoaded = true;
   vidSetStage('Engine ready', 68);
   vidLog('FFmpeg WASM engine loaded and ready');
