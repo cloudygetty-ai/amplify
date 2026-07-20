@@ -793,7 +793,7 @@ body.overlay-mode .panel{background:rgba(14,10,30,.25)!important;backdrop-filter
         <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:8px;letter-spacing:.15em;color:#9090b8">NOISE SUPPRESSION</span><span style="font-size:9px;color:#c084fc" id="vidStrV">65%</span></div>
         <input type="range" id="vidStr" min="0.3" max="0.99" step="0.01" value="0.65" oninput="vidStrength=parseFloat(this.value);document.getElementById('vidStrV').textContent=Math.round(this.value*100)+'%'" style="width:100%;height:3px;margin-bottom:10px"/>
         <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:8px;letter-spacing:.15em;color:#9090b8">VOICE BOOST</span><span style="font-size:9px;color:#c084fc" id="vidBoostV">5.0×</span></div>
-        <input type="range" id="vidBoost" min="1" max="10" step="0.1" value="1.0" oninput="vidBoost=parseFloat(this.value);document.getElementById('vidBoostV').textContent=parseFloat(this.value).toFixed(1)+'×'" style="width:100%;height:3px"/>
+        <input type="range" id="vidBoost" min="1" max="10" step="0.1" value="2.0" oninput="vidBoost=parseFloat(this.value);document.getElementById('vidBoostV').textContent=parseFloat(this.value).toFixed(1)+'×'" style="width:100%;height:3px"/>
       </div>
 
       <button id="vidProcessBtn" onclick="processVideo()" disabled
@@ -2476,7 +2476,7 @@ function tickEnhanced(){
 // VIDEO VOICE EXTRACTOR — ffmpeg.wasm + offline DSP render
 // ═══════════════════════════════════════════════════════
 let vidFFmpeg=null,vidFFmpegLoaded=false,vidSelectedFile=null;
-let vidStrength=0.65,vidBoost=1.0,vidProcessing=false;
+let vidStrength=0.65,vidBoost=2.0,vidProcessing=false;
 const VID_MAX_BYTES=2*1024*1024*1024; // 2GB
 
 function openVideoModal(){document.getElementById('videoModalOverlay').style.display='flex';}
@@ -2618,96 +2618,140 @@ vidFFmpegLoaded = true;
 // ── Offline noise gate (percentile-based, no calibration silence needed) ──
 function vidGateOffline(channelData, sr, strength, onProgress){
   // ══════════════════════════════════════════════════════════
-  // "PIN DROP" ENGINE — Upward expansion + spectral noise reduction
-  // Instead of gating out quiet sounds, we INTELLIGENTLY BOOST faint
-  // real signals while suppressing only the true noise floor.
+  // HARD VOICE-ACTIVITY GATE
+  // Output is SILENT everywhere except where human speech is detected.
+  // Detected speech is passed through (and cleaned/boosted downstream).
   // ══════════════════════════════════════════════════════════
-  const N=channelData.length, chunkSize=1024, nChunks=Math.ceil(N/chunkSize);
+  const N=channelData.length;
+  const frameMs=20;                          // 20ms analysis frames
+  const frameLen=Math.floor(sr*frameMs/1000);
+  const nFrames=Math.floor(N/frameLen);
 
-  // ── Pass 1: Build detailed noise profile across 16 sub-bands ──
-  const NBANDS=16;
-  const bandEnergy=new Array(nChunks);
-  for(let c=0;c<nChunks;c++){
-    const start=c*chunkSize,end=Math.min(N,start+chunkSize);
-    const bSz=Math.max(1,Math.floor((end-start)/NBANDS));
-    const bE=new Float32Array(NBANDS);
-    for(let b=0;b<NBANDS;b++){
-      let e=0,cnt=0;
-      for(let i=start+b*bSz;i<Math.min(end,start+(b+1)*bSz);i++){e+=channelData[i]*channelData[i];cnt++;}
-      bE[b]=cnt>0?Math.sqrt(e/cnt):0;
-    }
-    bandEnergy[c]=bE;
-    if(c%400===0&&onProgress)onProgress(c/nChunks*0.3);
-  }
+  // ── Pass 1: per-frame features (energy, zero-crossing rate, voice-band ratio) ──
+  const energy=new Float32Array(nFrames);
+  const zcr=new Float32Array(nFrames);
+  const vbr=new Float32Array(nFrames); // voice-band energy ratio
 
-  // ── Noise floor = 8th percentile per band (very low — captures true silence) ──
-  const noiseProfile=new Float32Array(NBANDS);
-  for(let b=0;b<NBANDS;b++){
-    const vals=bandEnergy.map(f=>f[b]).sort((a,c)=>a-c);
-    noiseProfile[b]=(vals[Math.floor(vals.length*0.08)]||0);
-  }
-
-  // ── Global signal statistics for adaptive expansion ──
-  const allRms=bandEnergy.map(f=>{let s=0;for(let b=0;b<NBANDS;b++)s+=f[b];return s/NBANDS;});
-  const sortedRms=[...allRms].sort((a,b)=>a-b);
-  const medianRms=sortedRms[Math.floor(sortedRms.length*0.5)]||0.01;
-  const loudRms=sortedRms[Math.floor(sortedRms.length*0.95)]||0.1;
-
-  // ── Pass 2: Upward expansion with spectral subtraction ──
-  const out=new Float32Array(N);
-  const gainSmooth=new Float32Array(NBANDS); // per-band gain memory
-
-  // Expansion parameters driven by strength (0..1)
-  // Higher strength = more aggressive quiet-sound boosting
-  const s = Math.max(0.1, Math.min(1, strength));
-  const MAX_UPWARD_GAIN = 1.5 + s*2.0; // gentle lift (max ~3.5×), not runaway boost
-  const NOISE_MULT = 2.0 + s*2.0;      // stay well above noise floor before boosting
-
-  for(let c=0;c<nChunks;c++){
-    const bE=bandEnergy[c],start=c*chunkSize,end=Math.min(N,start+chunkSize);
-    const bSz=Math.max(1,Math.floor((end-start)/NBANDS));
-
-    // Compute target gain per band
-    const bandGain=new Float32Array(NBANDS);
-    for(let b=0;b<NBANDS;b++){
-      const sig=bE[b];
-      const noise=noiseProfile[b]*NOISE_MULT;
-
-      if(sig < noise){
-        // Below noise floor — suppress (this is the true noise)
-        bandGain[b]=Math.max(0.02, sig/(noise+1e-10)*0.3);
-      } else {
-        // ── UPWARD EXPANSION: the quieter the (real) signal, the MORE we boost ──
-        // A signal just above noise gets maximum boost; loud signals get unity
-        const aboveNoise = sig - noise;
-        const dynamicRange = loudRms - noise;
-        const quietness = dynamicRange>0 ? 1 - Math.min(1, aboveNoise/dynamicRange) : 0.5;
-        // Exponential boost curve — faint sounds lifted dramatically
-        const boost = 1 + quietness*quietness*(MAX_UPWARD_GAIN-1);
-        bandGain[b]=boost;
-      }
-    }
-
-    // Smooth gain transitions (avoid pumping artifacts)
-    for(let b=0;b<NBANDS;b++){
-      const tg=bandGain[b];
-      const alpha = tg>gainSmooth[b] ? 0.15 : 0.04; // fast attack, slow release
-      gainSmooth[b]=gainSmooth[b]*(1-alpha)+tg*alpha;
-    }
-
-    // Apply per-band gain to samples
+  for(let f=0;f<nFrames;f++){
+    const start=f*frameLen,end=Math.min(N,start+frameLen);
+    let e=0,zc=0,prev=0;
     for(let i=start;i<end;i++){
-      const rel=(i-start)/(end-start);
-      const b=Math.min(NBANDS-1,Math.floor(rel*NBANDS));
-      // Interpolate between adjacent bands for smoothness
-      const bNext=Math.min(NBANDS-1,b+1);
-      const frac=(rel*NBANDS)-b;
-      const g=gainSmooth[b]*(1-frac)+gainSmooth[bNext]*frac;
+      const s=channelData[i];
+      e+=s*s;
+      if((s>=0)!==(prev>=0)) zc++;
+      prev=s;
+    }
+    energy[f]=Math.sqrt(e/(end-start));
+    zcr[f]=zc/(end-start);
+
+    // Voice-band ratio via simple band-pass energy (300-3400Hz telephone band)
+    // Approximate with a coarse Goertzel-ish sum over the frame
+    let vb=0,tot=0;
+    const step=Math.max(1,Math.floor((end-start)/64));
+    for(let k=1;k<32;k++){
+      const hz=k/64*sr;
+      let re=0,im=0;
+      for(let i=start;i<end;i+=step){
+        const ph=2*Math.PI*k*(i-start)/(end-start);
+        re+=channelData[i]*Math.cos(ph);
+        im+=channelData[i]*Math.sin(ph);
+      }
+      const mag=Math.sqrt(re*re+im*im);
+      tot+=mag;
+      if(hz>=300&&hz<=3400) vb+=mag;
+    }
+    vbr[f]=tot>0?vb/tot:0;
+    if(f%200===0&&onProgress)onProgress(f/nFrames*0.4);
+  }
+
+  // ── Noise floor estimate: 15th percentile of frame energy ──
+  const sortedE=[...energy].sort((a,b)=>a-b);
+  const noiseFloor=sortedE[Math.floor(sortedE.length*0.15)]||0.001;
+  const peakE=sortedE[Math.floor(sortedE.length*0.97)]||0.1;
+
+  // Strength controls detection sensitivity:
+  // higher strength = MORE aggressive gating (only strong clear voice passes)
+  // lower strength = permissive (catches faint speech too)
+  const s=Math.max(0.05,Math.min(1,strength));
+  // Energy threshold sits above the noise floor; scaled by strength
+  const enThresh=noiseFloor*(2.5+s*4.0);
+  // Voice-band ratio: speech concentrates energy in 300-3400Hz
+  const vbrThresh=0.35+s*0.25;
+  // ZCR: voiced speech has moderate ZCR; pure hiss/noise has very high ZCR
+  const zcrMax=0.35; // frames with ZCR above this are likely fricative noise, not voiced
+
+  // ── Pass 2: voice decision per frame with hysteresis ──
+  const voiceFlag=new Uint8Array(nFrames);
+  for(let f=0;f<nFrames;f++){
+    const isLoudEnough=energy[f]>enThresh;
+    const isVoiceSpectrum=vbr[f]>vbrThresh;
+    // A frame is "voice" if it has enough energy AND voice-band concentration
+    voiceFlag[f]=(isLoudEnough&&isVoiceSpectrum)?1:0;
+  }
+
+  // ── Smooth: require a run of voice frames (kills isolated blips) ──
+  // AND extend detected regions slightly (attack/release) so words aren't clipped
+  const MIN_RUN=4;        // need 4 consecutive voice frames (~80ms) to open gate
+  const HANG_FRAMES=8;    // keep gate open 160ms after voice stops (natural tails)
+  const smoothed=new Uint8Array(nFrames);
+
+  // Forward pass: confirm runs
+  let run=0;
+  for(let f=0;f<nFrames;f++){
+    if(voiceFlag[f]) run++; else run=0;
+    if(run>=MIN_RUN){
+      // Backfill the run
+      for(let k=f-run+1;k<=f;k++) smoothed[k]=1;
+    }
+  }
+  // Hangover: extend gate open after voice ends
+  let hang=0;
+  for(let f=0;f<nFrames;f++){
+    if(smoothed[f]) hang=HANG_FRAMES;
+    else if(hang>0){ smoothed[f]=1; hang--; }
+  }
+  // Pre-roll: open gate slightly BEFORE voice starts (catch word onsets)
+  for(let f=nFrames-1;f>0;f--){
+    if(smoothed[f]&&!smoothed[f-1]){
+      for(let k=Math.max(0,f-3);k<f;k++) smoothed[k]=1;
+    }
+  }
+
+  // ── Pass 3: apply hard gate with smooth ramps (no clicks) ──
+  const out=new Float32Array(N);
+  const RAMP=Math.floor(frameLen*0.5); // half-frame fade in/out
+  let voiceFrameCount=0;
+  for(let f=0;f<nFrames;f++){
+    const start=f*frameLen,end=Math.min(N,start+frameLen);
+    const isVoice=smoothed[f];
+    if(isVoice) voiceFrameCount++;
+    const prevVoice=f>0?smoothed[f-1]:0;
+    const nextVoice=f<nFrames-1?smoothed[f+1]:0;
+
+    for(let i=start;i<end;i++){
+      let g=isVoice?1:0;
+      // Fade in at gate opening
+      if(isVoice&&!prevVoice){
+        const pos=(i-start);
+        if(pos<RAMP) g=pos/RAMP;
+      }
+      // Fade out at gate closing
+      if(isVoice&&!nextVoice){
+        const pos=(i-start);
+        if(pos>frameLen-RAMP) g=(end-i)/RAMP;
+      }
       out[i]=channelData[i]*g;
     }
-
-    if(c%400===0&&onProgress)onProgress(0.3+c/nChunks*0.7);
+    if(f%200===0&&onProgress)onProgress(0.4+f/nFrames*0.6);
   }
+
+  // Stash detection stats for logging (global)
+  window._vadStats={
+    voiceFrames:voiceFrameCount,
+    totalFrames:nFrames,
+    voicePct:Math.round(voiceFrameCount/nFrames*100),
+    noiseFloor:noiseFloor.toFixed(4)
+  };
   return out;
 }
 
@@ -2719,28 +2763,18 @@ async function vidRenderDSP(gatedArray, sr, boost){
   buf.copyToChannel(gatedArray,0);
   const src=offCtx.createBufferSource(); src.buffer=buf;
 
-  // ══════════════════════════════════════════════════════════
-  // CLARITY CHAIN — improves intelligibility WITHOUT raising level.
-  // No make-up gain, no floor-lifting compressor. Normalization at
-  // the end guarantees output <= input loudness.
-  // ══════════════════════════════════════════════════════════
-
-  // HP — remove sub-80Hz rumble
-  const hp=offCtx.createBiquadFilter(); hp.type='highpass'; hp.frequency.value=80; hp.Q.value=0.7;
-  // Notch common AC hum @120Hz
-  const hum=offCtx.createBiquadFilter(); hum.type='notch'; hum.frequency.value=120; hum.Q.value=4;
-  // Gentle low-mid warmth +2dB @ 250Hz
+  // Voice-only chain: the gate already removed non-speech, so we clean
+  // and lift the surviving speech for maximum intelligibility.
+  const hp=offCtx.createBiquadFilter(); hp.type='highpass'; hp.frequency.value=90; hp.Q.value=0.7;
   const lowBoost=offCtx.createBiquadFilter(); lowBoost.type='peaking'; lowBoost.frequency.value=250; lowBoost.Q.value=0.8; lowBoost.gain.value=2;
-  // Presence for intelligibility +3dB @ 2.5kHz
-  const presence=offCtx.createBiquadFilter(); presence.type='peaking'; presence.frequency.value=2500; presence.Q.value=1.0; presence.gain.value=3;
-  // LP — trim hiss above 9kHz
-  const lp=offCtx.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=9000; lp.Q.value=0.6;
-  // Single gentle compressor — controls dynamics only, does NOT boost level
+  const presence=offCtx.createBiquadFilter(); presence.type='peaking'; presence.frequency.value=2600; presence.Q.value=1.0; presence.gain.value=4;
+  const lp=offCtx.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=8500; lp.Q.value=0.6;
   const comp=offCtx.createDynamicsCompressor();
-  comp.threshold.value=-20; comp.knee.value=15; comp.ratio.value=3; comp.attack.value=0.005; comp.release.value=0.15;
+  comp.threshold.value=-22; comp.knee.value=14; comp.ratio.value=4; comp.attack.value=0.004; comp.release.value=0.15;
+  const gain=offCtx.createGain(); gain.gain.value=Math.max(1,boost);
 
-  src.connect(hp); hp.connect(hum); hum.connect(lowBoost); lowBoost.connect(presence);
-  presence.connect(lp); lp.connect(comp); comp.connect(offCtx.destination);
+  src.connect(hp); hp.connect(lowBoost); lowBoost.connect(presence);
+  presence.connect(lp); lp.connect(comp); comp.connect(gain); gain.connect(offCtx.destination);
   src.start(0);
   return await offCtx.startRendering();
 }
@@ -2823,18 +2857,19 @@ async function processVideo(){
     }
     inRms = inCount>0 ? Math.sqrt(inRms/inCount) : 0.05;
 
-    // Measure output RMS
+    // Measure output RMS over VOICE segments only (non-silent samples)
     const procData = rendered.getChannelData(0);
     let outRms=0, outCount=0;
     for(let i=0;i<procData.length;i++){
       const v=Math.abs(procData[i]);
-      if(v>0.001){ outRms+=v*v; outCount++; }
+      if(v>0.005){ outRms+=v*v; outCount++; }  // only count audible (voice) samples
     }
     outRms = outCount>0 ? Math.sqrt(outRms/outCount) : 0.05;
 
-    // Match output loudness to the ORIGINAL input — never louder.
-    // Clarity comes from noise removal + EQ, NOT from raising the level.
-    const normGain = outRms>0 ? Math.min(1.0, inRms/outRms) : 1.0;
+    // Voice-only output: normalize detected speech to a clear, consistent level.
+    // Non-voice is already silent, so we can safely bring voice up to a target.
+    const VOICE_TARGET = 0.16;
+    const normGain = outRms>0 ? Math.min(6.0, VOICE_TARGET/outRms) : 1.0;
     vidLog('Normalizing: in RMS='+inRms.toFixed(4)+' out RMS='+outRms.toFixed(4)+' correction='+normGain.toFixed(2)+'×');
 
     // Apply normalization + hard limiter at -0.5dBFS
@@ -2876,6 +2911,7 @@ async function processVideo(){
     document.getElementById('vidDownload').download=origName+'_voice_amplified.mp4';
     document.getElementById('vidResult').style.display='block';
     vidLog('Processing complete — '+fmtVidBytes(outBlob.size));
+    if(window._vadStats){ vidLog('Voice detected in '+window._vadStats.voicePct+'% of audio ('+window._vadStats.voiceFrames+' frames). Everything else muted.'); }
 
   }catch(e){
     console.error(e);
