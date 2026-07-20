@@ -793,7 +793,7 @@ body.overlay-mode .panel{background:rgba(14,10,30,.25)!important;backdrop-filter
         <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:8px;letter-spacing:.15em;color:#9090b8">NOISE SUPPRESSION</span><span style="font-size:9px;color:#c084fc" id="vidStrV">65%</span></div>
         <input type="range" id="vidStr" min="0.3" max="0.99" step="0.01" value="0.65" oninput="vidStrength=parseFloat(this.value);document.getElementById('vidStrV').textContent=Math.round(this.value*100)+'%'" style="width:100%;height:3px;margin-bottom:10px"/>
         <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:8px;letter-spacing:.15em;color:#9090b8">VOICE BOOST</span><span style="font-size:9px;color:#c084fc" id="vidBoostV">5.0×</span></div>
-        <input type="range" id="vidBoost" min="1" max="10" step="0.1" value="6.0" oninput="vidBoost=parseFloat(this.value);document.getElementById('vidBoostV').textContent=parseFloat(this.value).toFixed(1)+'×'" style="width:100%;height:3px"/>
+        <input type="range" id="vidBoost" min="1" max="10" step="0.1" value="1.0" oninput="vidBoost=parseFloat(this.value);document.getElementById('vidBoostV').textContent=parseFloat(this.value).toFixed(1)+'×'" style="width:100%;height:3px"/>
       </div>
 
       <button id="vidProcessBtn" onclick="processVideo()" disabled
@@ -2476,7 +2476,7 @@ function tickEnhanced(){
 // VIDEO VOICE EXTRACTOR — ffmpeg.wasm + offline DSP render
 // ═══════════════════════════════════════════════════════
 let vidFFmpeg=null,vidFFmpegLoaded=false,vidSelectedFile=null;
-let vidStrength=0.65,vidBoost=6.0,vidProcessing=false;
+let vidStrength=0.65,vidBoost=1.0,vidProcessing=false;
 const VID_MAX_BYTES=2*1024*1024*1024; // 2GB
 
 function openVideoModal(){document.getElementById('videoModalOverlay').style.display='flex';}
@@ -2660,8 +2660,8 @@ function vidGateOffline(channelData, sr, strength, onProgress){
   // Expansion parameters driven by strength (0..1)
   // Higher strength = more aggressive quiet-sound boosting
   const s = Math.max(0.1, Math.min(1, strength));
-  const MAX_UPWARD_GAIN = 8 + s*24;    // up to 32× boost for faint sounds
-  const NOISE_MULT = 1.5 + s*1.5;      // how far above noise floor to start boosting
+  const MAX_UPWARD_GAIN = 1.5 + s*2.0; // gentle lift (max ~3.5×), not runaway boost
+  const NOISE_MULT = 2.0 + s*2.0;      // stay well above noise floor before boosting
 
   for(let c=0;c<nChunks;c++){
     const bE=bandEnergy[c],start=c*chunkSize,end=Math.min(N,start+chunkSize);
@@ -2720,45 +2720,27 @@ async function vidRenderDSP(gatedArray, sr, boost){
   const src=offCtx.createBufferSource(); src.buffer=buf;
 
   // ══════════════════════════════════════════════════════════
-  // MAXIMUM CLARITY CHAIN — multi-stage for "pin drop" audibility
+  // CLARITY CHAIN — improves intelligibility WITHOUT raising level.
+  // No make-up gain, no floor-lifting compressor. Normalization at
+  // the end guarantees output <= input loudness.
   // ══════════════════════════════════════════════════════════
 
-  // 1. HP — remove sub-80Hz rumble/handling noise
+  // HP — remove sub-80Hz rumble
   const hp=offCtx.createBiquadFilter(); hp.type='highpass'; hp.frequency.value=80; hp.Q.value=0.7;
-
-  // 2. Low-mid warmth (voice body) +3dB @ 250Hz
-  const lowBoost=offCtx.createBiquadFilter(); lowBoost.type='peaking'; lowBoost.frequency.value=250; lowBoost.Q.value=0.8; lowBoost.gain.value=3;
-
-  // 3. Notch out common HVAC/hum around 120Hz
+  // Notch common AC hum @120Hz
   const hum=offCtx.createBiquadFilter(); hum.type='notch'; hum.frequency.value=120; hum.Q.value=4;
-
-  // 4. Presence boost — intelligibility +5dB @ 2.5kHz
-  const presence=offCtx.createBiquadFilter(); presence.type='peaking'; presence.frequency.value=2500; presence.Q.value=1.0; presence.gain.value=5;
-
-  // 5. Air/detail — subtle high shelf +3dB @ 6kHz (helps hear faint detail)
-  const air=offCtx.createBiquadFilter(); air.type='highshelf'; air.frequency.value=6000; air.gain.value=3;
-
-  // 6. LP — cut above 9kHz (removes hiss, keeps voice + detail)
+  // Gentle low-mid warmth +2dB @ 250Hz
+  const lowBoost=offCtx.createBiquadFilter(); lowBoost.type='peaking'; lowBoost.frequency.value=250; lowBoost.Q.value=0.8; lowBoost.gain.value=2;
+  // Presence for intelligibility +3dB @ 2.5kHz
+  const presence=offCtx.createBiquadFilter(); presence.type='peaking'; presence.frequency.value=2500; presence.Q.value=1.0; presence.gain.value=3;
+  // LP — trim hiss above 9kHz
   const lp=offCtx.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=9000; lp.Q.value=0.6;
+  // Single gentle compressor — controls dynamics only, does NOT boost level
+  const comp=offCtx.createDynamicsCompressor();
+  comp.threshold.value=-20; comp.knee.value=15; comp.ratio.value=3; comp.attack.value=0.005; comp.release.value=0.15;
 
-  // 7. Stage-1 compressor — level the dynamics gently
-  const comp1=offCtx.createDynamicsCompressor();
-  comp1.threshold.value=-40; comp1.knee.value=15; comp1.ratio.value=3; comp1.attack.value=0.005; comp1.release.value=0.15;
-
-  // 8. Make-up gain (user boost)
-  const makeup=offCtx.createGain(); makeup.gain.value=1+boost*0.5;
-
-  // 9. Stage-2 compressor — bring up the floor (upward feel), heavier
-  const comp2=offCtx.createDynamicsCompressor();
-  comp2.threshold.value=-30; comp2.knee.value=20; comp2.ratio.value=6; comp2.attack.value=0.003; comp2.release.value=0.2;
-
-  // 10. Final limiter — brick wall, prevents any clipping
-  const limiter=offCtx.createDynamicsCompressor();
-  limiter.threshold.value=-3; limiter.knee.value=0; limiter.ratio.value=20; limiter.attack.value=0.0005; limiter.release.value=0.05;
-
-  src.connect(hp); hp.connect(lowBoost); lowBoost.connect(hum); hum.connect(presence);
-  presence.connect(air); air.connect(lp); lp.connect(comp1); comp1.connect(makeup);
-  makeup.connect(comp2); comp2.connect(limiter); limiter.connect(offCtx.destination);
+  src.connect(hp); hp.connect(hum); hum.connect(lowBoost); lowBoost.connect(presence);
+  presence.connect(lp); lp.connect(comp); comp.connect(offCtx.destination);
   src.start(0);
   return await offCtx.startRendering();
 }
@@ -2850,14 +2832,13 @@ async function processVideo(){
     }
     outRms = outCount>0 ? Math.sqrt(outRms/outCount) : 0.05;
 
-    // Target a strong, consistent output level (louder than input for faint sources)
-    // This is the "pin drop from a mile away" normalization — bring everything up
-    const TARGET_RMS = 0.18; // strong perceived loudness
-    const normGain = outRms>0 ? Math.min(12.0, TARGET_RMS/outRms) : 1.0;
+    // Match output loudness to the ORIGINAL input — never louder.
+    // Clarity comes from noise removal + EQ, NOT from raising the level.
+    const normGain = outRms>0 ? Math.min(1.0, inRms/outRms) : 1.0;
     vidLog('Normalizing: in RMS='+inRms.toFixed(4)+' out RMS='+outRms.toFixed(4)+' correction='+normGain.toFixed(2)+'×');
 
     // Apply normalization + hard limiter at -0.5dBFS
-    const PEAK_LIMIT = 0.944; // -0.5dBFS
+    const PEAK_LIMIT = 0.79; // -2dBFS — leave headroom, never hot
     const normData = rendered.getChannelData(0);
     // Find true peak after normalization
     let truePeak = 0;
